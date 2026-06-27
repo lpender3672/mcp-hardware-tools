@@ -2,8 +2,9 @@
 
 Development scaffolding, not part of the product surface: its only job is to put
 *known* signals on the wire so the scope tooling and decoders can be validated
-against ground truth. Today it streams a repeating UART byte; SPI/I²C emission
-grow here behind the same interface as the firmware contract is filled in.
+against ground truth. It mirrors the firmware command contract (see
+``firmware/common/src/protocol.rs``): identify, stream a UART byte, stop, and
+reboot into the bootloader for scripted reflashing.
 """
 
 from __future__ import annotations
@@ -25,12 +26,20 @@ class DigitalDUT(ABC):
         """Disconnect, leaving any active stimulus running on the device."""
 
     @abstractmethod
-    def start_uart_stream(self, value: int, *, baud: int, tx_pin: int = 0) -> None:
-        """Continuously transmit ``value`` (one byte) as 8N1 UART on ``tx_pin``."""
+    def idn(self) -> str:
+        """Return the device's identity banner."""
+
+    @abstractmethod
+    def start_uart_stream(self, value: int, *, baud: int) -> None:
+        """Continuously transmit ``value`` (one byte) as 8N1 UART at ``baud``."""
 
     @abstractmethod
     def stop(self) -> None:
-        """Stop any active stimulus."""
+        """Stop any active stimulus (the line returns to idle)."""
+
+    @abstractmethod
+    def reboot_to_bootloader(self) -> None:
+        """Reboot the device into its USB bootloader for reflashing."""
 
     def __enter__(self) -> Self:
         self.open()
