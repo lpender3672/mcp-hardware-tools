@@ -14,11 +14,12 @@ from dataclasses import dataclass, field
 
 from hwtools.analysis.adjust import suggest_adjustment
 from hwtools.analysis.judge import judge_capture
+from hwtools.analysis.recommend import Setup, recommend_setup
 from hwtools.interfaces.oscilloscope import Oscilloscope
 from hwtools.model.acquire import AcquireConfig
 from hwtools.model.capture import Capture
 from hwtools.model.channel import ChannelConfig
-from hwtools.model.ids import ChannelId
+from hwtools.model.ids import ChannelId, SweepMode
 from hwtools.model.quality import Adjustment, CaptureQuality
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import TriggerConfig
@@ -33,6 +34,82 @@ class LoopResult:
     iterations: int
     converged: bool
     adjustments: list[Adjustment] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class AutosetResult:
+    """Outcome of a single-stage autoset."""
+
+    capture: Capture
+    quality: CaptureQuality
+    setup: Setup
+    widen_steps: int
+    converged: bool
+
+
+def autoset(
+    scope: Oscilloscope,
+    *,
+    channels: Mapping[ChannelId, ChannelConfig],
+    timebase: TimebaseConfig,
+    trigger: TriggerConfig,
+    acquire: AcquireConfig | None = None,
+    wide_scale_v_per_div: float = 5.0,
+    max_widen: int = 3,
+) -> AutosetResult:
+    """Configure the scope in one recommendation stage.
+
+    Takes a deliberately wide measurement so the signal isn't clipped, makes a
+    single :func:`~hwtools.analysis.recommend.recommend_setup` recommendation
+    (scale/offset/timebase/trigger for every channel at once), applies it, and
+    returns the resulting capture. The only iteration is widening the
+    *measurement* if a very large signal still clips at the initial wide scale —
+    never to creep toward a target.
+    """
+    targets = list(channels)
+    scope.configure_timebase(timebase)
+    scope.configure_acquire(acquire or AcquireConfig())
+    # Measure with the trigger free-running so we always get the signal.
+    scope.configure_trigger(trigger.model_copy(update={"sweep": SweepMode.AUTO}))
+
+    wide_scale = wide_scale_v_per_div
+    measure_channels = {
+        ch: cfg.model_copy(update={"scale_v_per_div": wide_scale, "offset_v": 0.0})
+        for ch, cfg in channels.items()
+    }
+    widen_steps = 0
+    while True:
+        for cfg in measure_channels.values():
+            scope.configure_channel(cfg)
+        scope.run()
+        measurement = scope.capture(targets)
+        if widen_steps >= max_widen or not any(
+            measurement.waveforms[ch].is_clipped for ch in targets
+        ):
+            break
+        wide_scale *= 4.0
+        measure_channels = {
+            ch: cfg.model_copy(update={"scale_v_per_div": wide_scale, "offset_v": 0.0})
+            for ch, cfg in measure_channels.items()
+        }
+        widen_steps += 1
+
+    setup = recommend_setup(
+        measurement,
+        channels=measure_channels,
+        timebase=timebase,
+        trigger=trigger,
+        capabilities=scope.capabilities,
+        wide_scale_v_per_div=wide_scale,
+    )
+    for cfg in setup.channels.values():
+        scope.configure_channel(cfg)
+    scope.configure_timebase(setup.timebase)
+    scope.configure_trigger(setup.trigger)
+    scope.run()
+    final = scope.capture(targets)
+    quality = judge_capture(final, setup.channels, scope.capabilities)
+    return AutosetResult(final, quality, setup, widen_steps, quality.usable)
 
 
 def capture_until_usable(
