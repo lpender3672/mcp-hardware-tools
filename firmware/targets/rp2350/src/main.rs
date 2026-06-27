@@ -89,7 +89,8 @@ fn main() -> ! {
     let program = harness::uart_tx_program();
     let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
     let installed = pio.install(&program).unwrap();
-    let (int_div, frac_div) = harness::uart_clock_divider(clocks.system_clock.freq().to_Hz());
+    let sys_hz = clocks.system_clock.freq().to_Hz();
+    let (int_div, frac_div) = harness::uart_clock_divider(sys_hz);
     let (mut sm, _rx, mut pio_tx) = hal::pio::PIOBuilder::from_installed_program(installed)
         .out_pins(tx_id, 1)
         .side_set_pin_base(tx_id)
@@ -98,7 +99,7 @@ fn main() -> ! {
         .autopull(false)
         .build(sm0);
     sm.set_pindirs([(tx_id, hal::pio::PinDir::Output)]);
-    let _sm = sm.start();
+    let mut sm = sm.start();
 
     // --- USB-CDC command channel --------------------------------------------
     let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
@@ -134,17 +135,53 @@ fn main() -> ! {
     }
 
     let mut line: heapless::Vec<u8, 128> = heapless::Vec::new();
+    // Emission state. Defaults to streaming the known byte so the device is a
+    // useful source the moment it boots; the host can retarget it via EMIT/STOP.
+    let mut emitting = true;
+    let mut emit_byte = harness::STIMULUS_BYTE;
+
     loop {
-        // Keep emitting the default stimulus; ~2 ms gap leaves the line idle
-        // between bytes and gives the command parser time to run.
-        while !pio_tx.write(harness::STIMULUS_BYTE) {}
-        cortex_m::asm::delay(300_000);
+        if emitting {
+            // ~2 ms gap leaves the line idle (mark) between bytes for clean framing.
+            while !pio_tx.write(emit_byte) {}
+            cortex_m::asm::delay(300_000);
+        } else {
+            cortex_m::asm::delay(100_000); // idle; the PIO stalls with the line high
+        }
 
         while let Some(byte) = rx_cons.dequeue() {
             match byte {
                 b'\n' | b'\r' => {
                     if !line.is_empty() {
-                        process(&line, &mut tx_prod);
+                        let text = core::str::from_utf8(&line).unwrap_or("");
+                        match parse(text) {
+                            Ok(Command::Id) => reply(&mut tx_prod, BANNER),
+                            Ok(Command::Ping) => reply(&mut tx_prod, b"PONG\n"),
+                            Ok(Command::Stop) => {
+                                emitting = false;
+                                reply(&mut tx_prod, b"OK\n");
+                            }
+                            Ok(Command::EmitUart { byte, baud }) => {
+                                let (int_div, frac_div) =
+                                    harness::uart_clock_divider_for(sys_hz, baud);
+                                sm.clock_divisor_fixed_point(int_div, frac_div);
+                                emit_byte = byte as u32;
+                                emitting = true;
+                                reply(&mut tx_prod, b"OK\n");
+                            }
+                            Ok(Command::Bootsel) => {
+                                reply(&mut tx_prod, b"OK\n");
+                                cortex_m::asm::delay(2_000_000); // flush reply over USB
+                                hal::reboot::reboot(
+                                    hal::reboot::RebootKind::BootSel {
+                                        picoboot_disabled: false,
+                                        msd_disabled: false,
+                                    },
+                                    hal::reboot::RebootArch::Normal,
+                                );
+                            }
+                            Err(_) => reply(&mut tx_prod, b"ERR\n"),
+                        }
                         line.clear();
                     }
                 }
@@ -155,28 +192,6 @@ fn main() -> ! {
                 }
             }
         }
-    }
-}
-
-/// Handle one complete command line, queueing the reply for the ISR to send.
-fn process(line: &[u8], tx: &mut Producer<'static, u8>) {
-    let text = core::str::from_utf8(line).unwrap_or("");
-    match parse(text) {
-        Ok(Command::Id) => reply(tx, BANNER),
-        Ok(Command::Ping) => reply(tx, b"PONG\n"),
-        Ok(Command::Bootsel) => {
-            reply(tx, b"OK\n");
-            cortex_m::asm::delay(2_000_000); // let the reply flush over USB
-            hal::reboot::reboot(
-                hal::reboot::RebootKind::BootSel {
-                    picoboot_disabled: false,
-                    msd_disabled: false,
-                },
-                hal::reboot::RebootArch::Normal,
-            );
-        }
-        Ok(Command::Stop | Command::EmitUart { .. }) => reply(tx, b"ERR unimplemented\n"),
-        Err(_) => reply(tx, b"ERR\n"),
     }
 }
 

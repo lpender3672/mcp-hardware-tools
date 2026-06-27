@@ -39,11 +39,29 @@ pub fn uart_tx_program() -> Program<32> {
     .program
 }
 
-/// Fixed-point PIO clock divider `(int, frac)` to reach `CYCLES_PER_BIT * BAUD`
-/// from a state-machine source clock of `sys_hz`.
+/// Fixed-point PIO clock divider `(int, frac)` for the default [`BAUD`].
 pub fn uart_clock_divider(sys_hz: u32) -> (u16, u8) {
-    let denom = CYCLES_PER_BIT * BAUD;
+    uart_clock_divider_for(sys_hz, BAUD)
+}
+
+/// Fixed-point PIO clock divider `(int, frac)` to reach `CYCLES_PER_BIT * baud`
+/// from a state-machine source clock of `sys_hz`.
+pub fn uart_clock_divider_for(sys_hz: u32, baud: u32) -> (u16, u8) {
+    let denom = CYCLES_PER_BIT * baud;
     let int = (sys_hz / denom) as u16;
     let frac = (((sys_hz % denom) * 256) / denom) as u8;
     (int, frac)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn divider_matches_known_baud_at_150mhz() {
+        assert_eq!(uart_clock_divider_for(150_000_000, 9600), (1953, 32));
+        let (int, frac) = uart_clock_divider_for(150_000_000, 115_200);
+        assert_eq!(int, 162);
+        assert!((193..=195).contains(&frac));
+    }
 }
