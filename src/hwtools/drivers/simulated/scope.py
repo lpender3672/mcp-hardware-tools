@@ -50,12 +50,17 @@ class SimulatedScope(Oscilloscope):
         capabilities: ScopeCapabilities = DEFAULT_CAPABILITIES,
         noise_v: float = 0.0,
         n_points: int = 1200,
+        adc_overscan: float = 1.275,
         seed: int = 0,
     ) -> None:
         self._signals = dict(signals)
         self._caps = capabilities
         self._noise_v = noise_v
         self._n_points = n_points
+        # The digitiser captures beyond the on-screen graticule: the DS1000Z
+        # digitises ~+/-5 divisions, not the +/-4 of the 8-div screen (divergence
+        # #1). 1.275 * (8/2) ~= 5.1 div, matching the bench.
+        self._adc_overscan = adc_overscan
         self._rng = np.random.default_rng(seed)
         self._channels: dict[ChannelId, ChannelConfig] = {}
         self._timebase = TimebaseConfig(scale_s_per_div=1e-3)
@@ -165,8 +170,10 @@ class SimulatedScope(Oscilloscope):
         if self._noise_v > 0:
             true_v = true_v + self._rng.normal(0.0, self._noise_v, size=true_v.shape)
 
-        # The visible window saturates the ADC at the screen rails.
-        halfspan = config.scale_v_per_div * (self._caps.vertical_divisions / 2.0)
+        # The digitiser saturates a little beyond the screen (see _adc_overscan).
+        halfspan = (
+            config.scale_v_per_div * (self._caps.vertical_divisions / 2.0) * self._adc_overscan
+        )
         lo = -config.offset_v - halfspan
         hi = -config.offset_v + halfspan
         samples = np.clip(true_v, lo, hi)

@@ -29,11 +29,12 @@ def test_capture_window_matches_timebase() -> None:
 
 def test_small_scale_clips_signal() -> None:
     scope = _scope()
-    # 0.1 V/div * 8 div = 0.8 V full span -> a +/-1 V sine clips at +/-0.4 V.
+    # The digitiser captures ~+/-5.1 div (overscan), so at 0.1 V/div a +/-1 V sine
+    # clips at +/-0.51 V -- matching the real DS1000Z (divergence #1).
     scope.configure_channel(ChannelConfig(channel=ChannelId.CH1, scale_v_per_div=0.1))
     wf = scope.capture([ChannelId.CH1]).waveforms[ChannelId.CH1]
-    assert wf.vmax == pytest.approx(0.4, abs=1e-3)
-    assert wf.vmin == pytest.approx(-0.4, abs=1e-3)
+    assert wf.vmax == pytest.approx(0.51, abs=1e-3)
+    assert wf.vmin == pytest.approx(-0.51, abs=1e-3)
 
 
 def test_large_scale_does_not_clip() -> None:
