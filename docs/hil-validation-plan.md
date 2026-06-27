@@ -106,11 +106,14 @@ and the **suspected divergence** (why we expect it to fail first).
 
 ## Highest-risk assumptions (most likely to fail first)
 
-1. **Offset sign.** `recommend_setup` sets `offset_v = −midline` to centre a
-   channel. This is self-consistent in the sim because we defined both sides; the
-   real Rigol may centre the *opposite* way, which would push a DC-offset signal
-   *toward* a rail and cause clipping. Test explicitly: set a known offset on a
-   DC-offset signal and confirm the captured trace moves the expected direction.
+1. **Offset sign — VALIDATED (H2).** `recommend_setup` sets `offset_v = −midline`.
+   The bench confirms the DS1000Z convention is `screen_centre = −offset_v` (probed
+   via the saturation window), which matches the sim, so `offset_v = −mid` correctly
+   centres the screen window on the signal. autoset's centring error was +0.14 V on
+   a ~5.9 Vpp signal. Note: the returned waveform volts are *true input* (offset
+   only moves the screen window / what clips), which the sim also models correctly.
+   Still untested for a **DC-offset-dominated** signal (small amplitude, large
+   offset) — that needs the JDS6600 or an EMIT DC mode.
 2. **NORMAL-sweep untriggered capture.** When the trigger never fires, what does
    `:WAV:DATA?` return — the last frame, a stale buffer, or nothing? The
    trigger-fix path (T1/R8) needs the source waveform to read its midline. If the
