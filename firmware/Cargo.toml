@@ -1,0 +1,24 @@
+[package]
+name = "hwtools-harness"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "RP2350 harness firmware: emits known stimuli for validating the scope tooling."
+
+[[bin]]
+name = "hwtools-harness"
+test = false
+bench = false
+
+[profile.release]
+opt-level = "s"
+lto = true
+debug = false
+codegen-units = 1
+
+[dependencies]
+cortex-m = "0.7.7"
+cortex-m-rt = "0.7.5"
+panic-halt = "1.0.0"
+pio = "0.3.0"
+rp235x-hal = { version = "0.4.0", features = ["rt", "critical-section-impl"] }
