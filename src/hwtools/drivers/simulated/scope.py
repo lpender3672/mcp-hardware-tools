@@ -159,7 +159,9 @@ class SimulatedScope(Oscilloscope):
         lo = -config.offset_v - halfspan
         hi = -config.offset_v + halfspan
         samples = np.clip(true_v, lo, hi)
-        return Waveform(channel=channel, samples=samples, t0_s=t0_s, dt_s=dt_s)
+        return Waveform(
+            channel=channel, samples=samples, t0_s=t0_s, dt_s=dt_s, saturation=(lo, hi)
+        )
 
     def _resolve_trigger(self, window_s: float, dt_s: float) -> tuple[bool, float]:
         """Return (triggered, window start time), aligning a trigger to centre."""

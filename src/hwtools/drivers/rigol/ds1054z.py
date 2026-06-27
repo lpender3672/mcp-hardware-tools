@@ -171,7 +171,18 @@ class DS1054Z(Oscilloscope):
         raw = self._t.query_block(":WAVeform:DATA?")
         codes = np.frombuffer(raw, dtype=np.uint8).astype(np.float64)
         volts = (codes - pre.yorigin - pre.yreference) * pre.yincrement
-        return Waveform(channel=channel, samples=volts, t0_s=pre.xorigin, dt_s=pre.xincrement)
+        # BYTE codes span 0..255; the extremes are the true digitiser saturation
+        # rails, so the analysis can tell genuine clipping from a tall-but-fit signal.
+        rail_a = (0.0 - pre.yorigin - pre.yreference) * pre.yincrement
+        rail_b = (255.0 - pre.yorigin - pre.yreference) * pre.yincrement
+        saturation = (min(rail_a, rail_b), max(rail_a, rail_b))
+        return Waveform(
+            channel=channel,
+            samples=volts,
+            t0_s=pre.xorigin,
+            dt_s=pre.xincrement,
+            saturation=saturation,
+        )
 
 
 def _onoff(value: bool) -> str:

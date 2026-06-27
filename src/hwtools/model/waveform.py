@@ -45,6 +45,20 @@ class Waveform(BaseModel):
     t0_s: float = Field(description="Timestamp of the first sample.")
     dt_s: float = Field(gt=0, description="Sample interval, seconds.")
     units: str = "V"
+    saturation: tuple[float, float] | None = Field(
+        default=None,
+        description="(low, high) volts at which the digitiser saturates, if known. "
+        "A sample at a rail means the true signal was clipped there.",
+    )
+
+    @property
+    def is_clipped(self) -> bool:
+        """Whether any sample reaches the known saturation rails."""
+        if self.saturation is None or self.n == 0:
+            return False
+        low, high = self.saturation
+        margin = (high - low) * 0.005
+        return self.vmax >= high - margin or self.vmin <= low + margin
 
     @field_validator("samples", mode="before")
     @classmethod

@@ -42,12 +42,17 @@ def judge_capture(
             continue
 
         full_scale = config.scale_v_per_div * capabilities.vertical_divisions
-        halfspan = full_scale / 2.0
-        rail_high = -config.offset_v + halfspan
-        rail_low = -config.offset_v - halfspan
-        margin = _RAIL_MARGIN_FRAC * full_scale
 
-        clipped = wf.vmax >= rail_high - margin or wf.vmin <= rail_low + margin
+        if wf.saturation is not None:
+            # Exact: a sample at the digitiser's rail means real clipping.
+            clipped = wf.is_clipped
+        else:
+            # Fallback: model the rails from the configured screen window.
+            halfspan = full_scale / 2.0
+            rail_high = -config.offset_v + halfspan
+            rail_low = -config.offset_v - halfspan
+            margin = _RAIL_MARGIN_FRAC * full_scale
+            clipped = wf.vmax >= rail_high - margin or wf.vmin <= rail_low + margin
         clipping[channel] = clipped
         fill = wf.vpp / full_scale if full_scale > 0 else 0.0
         fill_fraction[channel] = fill
