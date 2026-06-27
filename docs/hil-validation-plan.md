@@ -7,6 +7,20 @@
 > the model assumed). No committed `@pytest.mark.hardware` test exercises any
 > recommender. The architecture is sound but **unproven on metal**.
 
+## Acquisition modes: repetitive vs single-shot
+
+The convergence loops (`autoset`, `capture_until_usable`) assume a **repeating**
+signal — every iteration re-captures the same thing. That is the wrong model for a
+**single-shot / non-repeating** event (a glitch, a power-on transient, a one-time
+transaction): you get one acquisition, so the setup must be right *before* arming.
+`capture_single` (loop.py) is the single-shot path — set up, arm SINGLE, poll the
+trigger status, read one frame, judge it. Validated on the bench
+(`test_single_shot_hil.py`): the scope captures one frame and STOPs.
+
+Outstanding: a genuinely non-repeating ground-truth source (a one-shot Pico pulse
+fired *after* the scope is armed) to prove the "you only get one chance" aspect;
+the arm/wait/capture/stop mechanism itself is already validated.
+
 ## Operating philosophy: expect failure
 
 We will write each HIL test to assert the *correct* behaviour, run it on the

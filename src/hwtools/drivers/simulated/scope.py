@@ -114,10 +114,21 @@ class SimulatedScope(Oscilloscope):
         self._status = TriggerStatus.STOP
 
     def single(self) -> None:
-        self._status = TriggerStatus.WAIT
+        # Arm a single acquisition: it completes (STOP) once the trigger would
+        # fire on the signal, otherwise it waits forever (WAIT).
+        self._status = TriggerStatus.STOP if self._would_trigger() else TriggerStatus.WAIT
 
     def force_trigger(self) -> None:
         self._status = TriggerStatus.AUTO
+
+    def _would_trigger(self) -> bool:
+        if self._trigger is None:
+            return False
+        signal = self._signals.get(self._trigger.trigger.source)
+        if signal is None:
+            return False
+        low, high = signal.vrange
+        return low <= self._trigger.trigger.level_v <= high
 
     def trigger_status(self) -> TriggerStatus:
         return self._status

@@ -9,6 +9,7 @@ scope (CI) and the bench, because it only speaks the interface and the model.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -19,10 +20,13 @@ from hwtools.interfaces.oscilloscope import Oscilloscope
 from hwtools.model.acquire import AcquireConfig
 from hwtools.model.capture import Capture
 from hwtools.model.channel import ChannelConfig
-from hwtools.model.ids import ChannelId, SweepMode
+from hwtools.model.ids import ChannelId, SweepMode, TriggerStatus
 from hwtools.model.quality import Adjustment, CaptureQuality
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import TriggerConfig
+
+# Trigger states that mean a single acquisition has completed and a frame is ready.
+_CAPTURED_STATES = (TriggerStatus.STOP, TriggerStatus.TRIGGERED)
 
 
 @dataclass(frozen=True)
@@ -45,6 +49,51 @@ class AutosetResult:
     setup: Setup
     widen_steps: int
     converged: bool
+
+
+@dataclass(frozen=True)
+class SingleShotResult:
+    """Outcome of a single-shot acquisition."""
+
+    triggered: bool
+    capture: Capture | None = None
+    quality: CaptureQuality | None = None
+
+
+def capture_single(
+    scope: Oscilloscope,
+    *,
+    channels: Mapping[ChannelId, ChannelConfig],
+    timebase: TimebaseConfig,
+    trigger: TriggerConfig,
+    acquire: AcquireConfig | None = None,
+    poll_timeout_s: float = 2.0,
+    poll_interval_s: float = 0.02,
+) -> SingleShotResult:
+    """Capture one non-repeating event: set up, arm SINGLE, wait, read one frame.
+
+    Unlike the convergence loops this cannot iterate — a single-shot event happens
+    once, so the configuration must be right *before* arming. It applies the given
+    setup, arms a single acquisition, polls the trigger status until the frame is
+    captured (or ``poll_timeout_s`` elapses), then downloads and judges it.
+    """
+    configured = dict(channels)
+    for config in configured.values():
+        scope.configure_channel(config)
+    scope.configure_timebase(timebase)
+    scope.configure_trigger(trigger)
+    scope.configure_acquire(acquire or AcquireConfig())
+    targets = list(configured)
+
+    scope.single()
+    deadline = time.monotonic() + poll_timeout_s
+    while time.monotonic() < deadline:
+        if scope.trigger_status() in _CAPTURED_STATES:
+            capture = scope.capture(targets)
+            quality = judge_capture(capture, configured, scope.capabilities)
+            return SingleShotResult(triggered=True, capture=capture, quality=quality)
+        time.sleep(poll_interval_s)
+    return SingleShotResult(triggered=False)
 
 
 def autoset(
