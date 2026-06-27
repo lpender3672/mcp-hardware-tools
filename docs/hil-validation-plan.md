@@ -114,12 +114,13 @@ and the **suspected divergence** (why we expect it to fail first).
    only moves the screen window / what clips), which the sim also models correctly.
    Still untested for a **DC-offset-dominated** signal (small amplitude, large
    offset) — that needs the JDS6600 or an EMIT DC mode.
-2. **NORMAL-sweep untriggered capture.** When the trigger never fires, what does
-   `:WAV:DATA?` return — the last frame, a stale buffer, or nothing? The
-   trigger-fix path (T1/R8) needs the source waveform to read its midline. If the
-   buffer is stale/empty, the recommendation is computed from garbage. The likely
-   fix: always *measure* with the sweep forced to AUTO, then apply the chosen
-   sweep — which `autoset` already does, but `capture_until_usable` does not.
+2. **NORMAL-sweep untriggered capture — VALIDATED (H3), does not occur.** The fear
+   was that `:WAV:DATA?` returns stale/empty data when the trigger never fires,
+   breaking the trigger-level fix (T1/R8). On the bench the DS1000Z returns the
+   *live* acquisition even when untriggered, so `capture_until_usable` reads the
+   source midline and fixes the trigger fine (converged in 4 iters under NORMAL
+   sweep, A1+T1 both firing). `autoset` measures with AUTO sweep anyway, so it was
+   never at risk. No fix needed.
 3. **ADC rail extent / fill margins under noise.** Already bit us once (±5 vs ±4).
    Real noise may trip the clipping margin or the low-fill threshold.
 4. **Frequency estimation on real signals.** Mean-crossing frequency on a ringy
