@@ -2,7 +2,8 @@
 //!
 //! Continuously transmits a known byte as 8N1 UART using a PIO state machine, so
 //! the scope tooling + decoders can be validated against ground truth. Emission
-//! is on **GP2** (physical pin 4); wire scope CH1 there, GND to pin 3.
+//! is on **GP0** (physical pin 1), where scope CH1 is wired (GND to pin 3). The
+//! RP2350 USB is on dedicated pins, so GP0/GP1 are free for harness signals.
 //!
 //! This is the harness's first incarnation: a free-running fixed stimulus, no
 //! host control. A USB-CDC command contract grows here later.
@@ -55,8 +56,8 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
-    // GP2 driven by PIO0 as the UART TX line.
-    let tx_pin = pins.gpio2.into_function::<hal::gpio::FunctionPio0>();
+    // GP0 driven by PIO0 as the UART TX line (scope CH1).
+    let tx_pin = pins.gpio0.into_function::<hal::gpio::FunctionPio0>();
     let tx_id = tx_pin.id().num;
 
     // 8n1 UART TX PIO program: idle/stop high (side-set), start bit low, then
