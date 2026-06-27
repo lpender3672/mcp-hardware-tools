@@ -1,0 +1,19 @@
+[package]
+name = "hwtools-harness-rp2040"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Harness firmware for the RP2040 (Raspberry Pi Pico)."
+
+[[bin]]
+name = "hwtools-harness-rp2040"
+test = false
+bench = false
+
+[dependencies]
+cortex-m = "0.7.7"
+cortex-m-rt = "0.7.5"
+panic-halt = "1.0.0"
+rp2040-hal = { version = "0.12", features = ["rt", "critical-section-impl"] }
+rp2040-boot2 = "0.3"
+hwtools-harness-common = { path = "../../common" }
