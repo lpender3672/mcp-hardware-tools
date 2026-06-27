@@ -37,6 +37,14 @@ def test_converges_from_clipped_and_untriggered() -> None:
     assert result.adjustments  # it had to adjust
 
 
+def test_loop_exhausts_budget_without_converging() -> None:
+    # L3: a clipped start needs several grows; one iteration isn't enough.
+    scope = SimulatedScope({ChannelId.CH1: Sine(amplitude_v=3.0, frequency_hz=1_000.0)})
+    result = _run(scope, scale=0.1, level=9.0, max_iterations=1)
+    assert not result.converged
+    assert result.iterations == 1
+
+
 def test_already_usable_converges_immediately() -> None:
     scope = SimulatedScope({ChannelId.CH1: Sine(amplitude_v=1.0, frequency_hz=1_000.0)})
     result = _run(scope, scale=0.3, level=0.0)

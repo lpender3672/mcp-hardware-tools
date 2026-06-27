@@ -6,7 +6,7 @@ import pytest
 
 from hwtools.analysis.loop import autoset
 from hwtools.analysis.recommend import recommend_setup
-from hwtools.drivers.simulated import DEFAULT_CAPABILITIES, SimulatedScope, Sine
+from hwtools.drivers.simulated import DEFAULT_CAPABILITIES, Dc, SimulatedScope, Sine
 from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, Slope, SweepMode
 from hwtools.model.timebase import TimebaseConfig
@@ -94,6 +94,28 @@ def test_recommend_opens_wide_on_a_clipped_channel() -> None:
     )
     assert setup.channels[CH1].scale_v_per_div == 5.0
     assert setup.channels[CH1].offset_v == 0.0
+
+
+def test_recommend_keeps_scale_and_timebase_for_dc() -> None:
+    # R3 (flat -> keep scale) + R6 (no frequency -> keep timebase), centred on the DC level.
+    scope = SimulatedScope({CH1: Dc(2.0)})
+    cfg = ChannelConfig(channel=CH1, scale_v_per_div=1.0)
+    scope.configure_channel(cfg)
+    timebase = TimebaseConfig(scale_s_per_div=1e-3)
+    scope.configure_timebase(timebase)
+    capture = scope.capture([CH1])
+    assert capture.waveforms[CH1].vpp == 0.0
+
+    setup = recommend_setup(
+        capture,
+        channels={CH1: cfg},
+        timebase=timebase,
+        trigger=_trigger(level=2.0),
+        capabilities=DEFAULT_CAPABILITIES,
+    )
+    assert setup.channels[CH1].scale_v_per_div == cfg.scale_v_per_div  # R3
+    assert setup.timebase.scale_s_per_div == timebase.scale_s_per_div  # R6
+    assert setup.channels[CH1].offset_v == pytest.approx(-2.0)  # centred on DC
 
 
 def test_autoset_gives_up_honestly_on_an_oversized_signal() -> None:
