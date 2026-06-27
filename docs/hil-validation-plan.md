@@ -184,5 +184,6 @@ and the **suspected divergence** (why we expect it to fail first).
 | # | Symptom | Root cause | Fix | Commit |
 |---|---|---|---|---|
 | 1 | judge false-positive clipping at 1.0 V/div | sim modelled ADC at ±4 div; DS1000Z digitises ~±5 div | carry true saturation rails from the preamble; judge uses them | `e59a644` |
-| 2 | `measure.frequency` read 2× on a 75%-duty real square | mean-crossing: the DC mean sits near the high plateau, so overshoot ringing crosses it repeatedly | estimate from midpoint+hysteresis (Schmitt) rising-edge spacing instead | H1 |
+| 2 | `measure.frequency` read 2× on a 75%-duty real square | mean-crossing: the DC mean sits near the high plateau, so overshoot ringing crosses it repeatedly | (interim) midpoint+hysteresis rising-edge spacing | H1 |
+| 3 | crossing estimator reported a spurious tone on a noisy DC line | any crossing method counts noise crossings as edges; fundamentally noise-sensitive | replaced with an **FFT peak-prominence** estimator — integrates over the record, returns None when no bin stands above the noise floor (subsumes #2) | H6 |
 | … | _(to be filled as HIL tests fail and teach us)_ | | | |

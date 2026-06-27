@@ -1,6 +1,6 @@
 """Layer 4 (pure) — measurements and the judge/adjust brain of the loop."""
 
-from hwtools.analysis import measure
+from hwtools.analysis import measure, spectrum
 from hwtools.analysis.adjust import suggest_adjustment
 from hwtools.analysis.judge import judge_capture
 from hwtools.analysis.loop import (
@@ -24,5 +24,6 @@ __all__ = [
     "judge_capture",
     "measure",
     "recommend_setup",
+    "spectrum",
     "suggest_adjustment",
 ]

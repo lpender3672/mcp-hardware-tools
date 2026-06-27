@@ -13,6 +13,7 @@ dependencies = [
     "pyvisa-py>=0.7",
     "pyserial>=3.5",
     "mcp>=1.2",
+    "scipy>=1.18.0",
 ]
 
 [project.scripts]
@@ -54,7 +55,7 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 # Third-party libs without complete type stubs.
-module = ["pyvisa.*", "serial.*"]
+module = ["pyvisa.*", "serial.*", "scipy.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

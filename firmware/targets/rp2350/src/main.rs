@@ -181,7 +181,15 @@ fn main() -> ! {
                                 pwm.set_div_int(p.div_int);
                                 pwm.set_div_frac(0);
                                 pwm.set_top(p.top);
-                                let _ = pwm.channel_b.set_duty_cycle(p.compare);
+                                // 100% / 0% are true DC (constant high / low); a
+                                // clamped compare would leave a one-count glitch.
+                                let _ = if duty_pct >= 100 {
+                                    pwm.channel_b.set_duty_cycle_fully_on()
+                                } else if duty_pct == 0 {
+                                    pwm.channel_b.set_duty_cycle_fully_off()
+                                } else {
+                                    pwm.channel_b.set_duty_cycle(p.compare)
+                                };
                                 pwm.enable();
                                 reply(&mut tx_prod, b"OK\n");
                             }
