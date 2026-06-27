@@ -388,6 +388,7 @@ version = "0.0.0"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
+ "embedded-hal 1.0.0",
  "heapless 0.9.3",
  "hwtools-harness-common",
  "panic-halt",

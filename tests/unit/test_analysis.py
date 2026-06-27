@@ -15,7 +15,7 @@ from hwtools.model.trigger import EdgeTrigger, TriggerConfig
 from hwtools.model.waveform import Waveform
 
 
-def _sine_wf(freq_hz: float, dt_s: float, n: int = 2000) -> Waveform:
+def _sine_wf(freq_hz: float, dt_s: float, n: int = 10_000) -> Waveform:
     t = np.arange(n) * dt_s
     samples = np.sin(2 * np.pi * freq_hz * t)
     return Waveform(channel=ChannelId.CH1, samples=samples, t0_s=0.0, dt_s=dt_s)

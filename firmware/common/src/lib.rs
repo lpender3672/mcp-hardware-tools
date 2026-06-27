@@ -53,6 +53,34 @@ pub fn uart_clock_divider_for(sys_hz: u32, baud: u32) -> (u16, u8) {
     (int, frac)
 }
 
+/// Hardware-PWM register values for a square wave.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SquarePwm {
+    /// Integer clock divider for the PWM slice.
+    pub div_int: u8,
+    /// TOP (wrap) register = period in counts minus one.
+    pub top: u16,
+    /// Compare level (counts the output is high) = duty * (top + 1).
+    pub compare: u16,
+}
+
+/// Compute PWM registers for `freq_hz` at `duty_pct` from a `sys_hz` clock.
+///
+/// Picks the smallest integer divider that keeps the period within the 16-bit
+/// TOP register, maximising duty resolution. The realised frequency is
+/// `sys_hz / (div_int * (top + 1))` — close to requested, and the test harness
+/// measures the actual value rather than assuming it.
+pub fn square_pwm_params(sys_hz: u32, freq_hz: u32, duty_pct: u32) -> SquarePwm {
+    let freq = freq_hz.max(1);
+    let duty = duty_pct.min(100);
+    let total = (sys_hz / freq).clamp(2, 255 * 65_536);
+    let div = total.div_ceil(65_536).clamp(1, 255);
+    let period = (total / div).clamp(2, 65_536);
+    let top = (period - 1) as u16;
+    let compare = ((period * duty) / 100).min(period - 1) as u16;
+    SquarePwm { div_int: div as u8, top, compare }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,5 +91,26 @@ mod tests {
         let (int, frac) = uart_clock_divider_for(150_000_000, 115_200);
         assert_eq!(int, 162);
         assert!((193..=195).contains(&frac));
+    }
+
+    #[test]
+    fn square_pwm_1khz_50pct_at_150mhz() {
+        let p = square_pwm_params(150_000_000, 1_000, 50);
+        let realised = 150_000_000.0 / (p.div_int as f64 * (p.top as f64 + 1.0));
+        assert!((realised - 1_000.0).abs() / 1_000.0 < 0.01); // within 1%
+        let duty = p.compare as f64 / (p.top as f64 + 1.0);
+        assert!((duty - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn square_pwm_handles_low_and_high_frequencies() {
+        // 100 Hz needs a divider (period > 16 bits at full clock).
+        let low = square_pwm_params(150_000_000, 100, 50);
+        assert!(low.div_int > 1);
+        // 1 MHz fits with div 1.
+        let high = square_pwm_params(150_000_000, 1_000_000, 25);
+        assert_eq!(high.div_int, 1);
+        let duty = high.compare as f64 / (high.top as f64 + 1.0);
+        assert!((duty - 0.25).abs() < 0.02);
     }
 }

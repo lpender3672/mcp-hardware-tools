@@ -34,6 +34,10 @@ class DigitalDUT(ABC):
         """Continuously transmit ``value`` (one byte) as 8N1 UART at ``baud``."""
 
     @abstractmethod
+    def start_square(self, freq_hz: int, *, duty_pct: int = 50) -> None:
+        """Output a square wave at ``freq_hz`` with ``duty_pct`` percent duty."""
+
+    @abstractmethod
     def stop(self) -> None:
         """Stop any active stimulus (the line returns to idle)."""
 

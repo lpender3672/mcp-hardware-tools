@@ -22,6 +22,7 @@ use panic_halt as _;
 use rp235x_hal as hal;
 
 use cortex_m::peripheral::NVIC;
+use embedded_hal::pwm::SetDutyCycle;
 use hal::pac::interrupt;
 use hal::pio::{PIOExt, ShiftDirection};
 use hal::Clock;
@@ -101,6 +102,11 @@ fn main() -> ! {
     sm.set_pindirs([(tx_id, hal::pio::PinDir::Output)]);
     let mut sm = sm.start();
 
+    // --- PWM square-wave generator on GP1 (scope CH2) -----------------------
+    let pwm_slices = hal::pwm::Slices::new(pac.PWM, &mut pac.RESETS);
+    let mut pwm = pwm_slices.pwm0; // slice 0, channel B -> GP1
+    let _square_pin = pwm.channel_b.output_to(pins.gpio1);
+
     // --- USB-CDC command channel --------------------------------------------
     let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
         pac.USB,
@@ -159,6 +165,7 @@ fn main() -> ! {
                             Ok(Command::Ping) => reply(&mut tx_prod, b"PONG\n"),
                             Ok(Command::Stop) => {
                                 emitting = false;
+                                pwm.disable();
                                 reply(&mut tx_prod, b"OK\n");
                             }
                             Ok(Command::EmitUart { byte, baud }) => {
@@ -167,6 +174,15 @@ fn main() -> ! {
                                 sm.clock_divisor_fixed_point(int_div, frac_div);
                                 emit_byte = byte as u32;
                                 emitting = true;
+                                reply(&mut tx_prod, b"OK\n");
+                            }
+                            Ok(Command::EmitSquare { freq_hz, duty_pct }) => {
+                                let p = harness::square_pwm_params(sys_hz, freq_hz, duty_pct);
+                                pwm.set_div_int(p.div_int);
+                                pwm.set_div_frac(0);
+                                pwm.set_top(p.top);
+                                let _ = pwm.channel_b.set_duty_cycle(p.compare);
+                                pwm.enable();
                                 reply(&mut tx_prod, b"OK\n");
                             }
                             Ok(Command::Bootsel) => {

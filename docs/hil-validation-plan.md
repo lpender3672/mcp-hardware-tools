@@ -37,14 +37,17 @@ the digital decode slice, but it is **not** a clean, known analog signal, and it
 cannot reach several states at all (clean periodic frequency, DC/flat, fast
 undersampled signals, arbitrary amplitude/offset).
 
-Per the README, the **JDS6600 signal generator is exactly this ground-truth
-source** (known sine/square/DC at known V/Hz/offset). Bringing it online is a
-prerequisite for honest analog HIL validation. The Pico stays the *digital* DUT;
-the JDS6600 becomes the *analog* stimulus for the recommender tests.
-
-A lighter secondary option: extend the Pico firmware with `EMIT SQUARE <hz>`,
-a fast-square mode, and a `EMIT DC` (GPIO held high ≈ 3.3 V) so a subset of
-states can be reached without the siggen.
+Per the README, the **JDS6600 signal generator is the eventual ground-truth
+source** (true analog sine/DC at arbitrary V/offset). It is **not on the bench
+right now**, so as the interim source we extended the Pico firmware with
+**`EMIT SQUARE <hz> <duty%>`** — a hardware-PWM square on GP1 (CH2) at a known
+frequency and duty (validated by `tests/hardware/test_square_hil.py`). This is a
+clean periodic 0–3.3 V (logic-level) signal that reaches most recommender states:
+known frequency (timebase/R5), edges (trigger/R8), fast signals (undersampling),
+and clipping at small V/div. What it *cannot* give is an arbitrary analog
+amplitude or a true DC level — those still want the JDS6600, deferred until it is
+available. A `EMIT DC` mode (GPIO held high ≈ 3.3 V) is a cheap next addition for
+the flat/DC states.
 
 ---
 
@@ -163,4 +166,5 @@ and the **suspected divergence** (why we expect it to fail first).
 | # | Symptom | Root cause | Fix | Commit |
 |---|---|---|---|---|
 | 1 | judge false-positive clipping at 1.0 V/div | sim modelled ADC at ±4 div; DS1000Z digitises ~±5 div | carry true saturation rails from the preamble; judge uses them | `e59a644` |
+| 2 | `measure.frequency` read 2× on a 75%-duty real square | mean-crossing: the DC mean sits near the high plateau, so overshoot ringing crosses it repeatedly | estimate from midpoint+hysteresis (Schmitt) rising-edge spacing instead | H1 |
 | … | _(to be filled as HIL tests fail and teach us)_ | | | |

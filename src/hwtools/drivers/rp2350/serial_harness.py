@@ -87,6 +87,15 @@ class SerialHarness(DigitalDUT):
         if reply != "OK":
             raise RuntimeError(f"EMIT rejected: {reply!r}")
 
+    def start_square(self, freq_hz: int, *, duty_pct: int = 50) -> None:
+        if freq_hz <= 0:
+            raise ValueError("freq_hz must be positive")
+        if not 0 <= duty_pct <= 100:
+            raise ValueError("duty_pct must be 0..100")
+        reply = self._command(f"EMIT SQUARE {freq_hz} {duty_pct}")
+        if reply != "OK":
+            raise RuntimeError(f"EMIT SQUARE rejected: {reply!r}")
+
     def stop(self) -> None:
         reply = self._command("STOP")
         if reply != "OK":

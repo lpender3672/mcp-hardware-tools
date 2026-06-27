@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from hwtools.decode.threshold import find_edges, threshold
 from hwtools.model.waveform import Waveform
 
 
@@ -20,19 +21,22 @@ def rms(wf: Waveform) -> float:
 
 
 def frequency(wf: Waveform) -> float | None:
-    """Estimate the fundamental frequency via mean-level crossings.
+    """Estimate the fundamental frequency from rising-edge spacing.
 
-    Returns ``None`` for a flat/DC trace or too few crossings to be meaningful.
+    Thresholds at the midpoint with hysteresis (Schmitt) and measures
+    rising-edge-to-rising-edge periods. Using the midpoint (not the mean) plus
+    hysteresis is robust to overshoot ringing and asymmetric duty cycles, which
+    fool a mean-crossing estimate. Returns ``None`` for a flat/DC trace or too
+    few cycles to be meaningful.
     """
-    if wf.n < 4:
+    if wf.n < 4 or wf.vpp <= 0:
         return None
-    midline = float(wf.samples.mean())
-    above = wf.samples >= midline
-    crossings = np.flatnonzero(np.diff(above.astype(np.int8)) != 0)
-    if crossings.size < 2:
+    midpoint = (wf.vmax + wf.vmin) / 2.0
+    trace = threshold(wf, level_v=midpoint, hysteresis_v=wf.vpp * 0.2)
+    rising = [edge.time_s for edge in find_edges(trace) if edge.rising]
+    if len(rising) < 2:
         return None
-    half_periods = np.diff(crossings).astype(np.float64) * wf.dt_s
-    period = 2.0 * float(np.median(half_periods))
+    period = float(np.median(np.diff(rising)))
     return 1.0 / period if period > 0 else None
 
 

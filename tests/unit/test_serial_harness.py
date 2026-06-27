@@ -48,6 +48,14 @@ def test_start_uart_stream_formats_command() -> None:
     assert fake.commands == ["EMIT UART A5 9600"]
 
 
+def test_start_square_formats_command() -> None:
+    fake = FakeSerial(["OK"])
+    harness = SerialHarness.from_serial(fake)
+    harness.open()
+    harness.start_square(1000, duty_pct=25)
+    assert fake.commands == ["EMIT SQUARE 1000 25"]
+
+
 def test_emit_rejection_raises() -> None:
     fake = FakeSerial(["ERR"])
     harness = SerialHarness.from_serial(fake)
