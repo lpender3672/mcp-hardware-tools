@@ -4,8 +4,13 @@
 //! have the same PIO block, so the UART-TX program and the configuration live
 //! here, and each target crate only supplies the HAL-specific wiring (clocks,
 //! pins, state-machine setup, boot block).
+//!
+//! `no_std` for the firmware; the host test harness (`cargo test`) builds with
+//! `std` so the protocol parser can be unit-tested off-target.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
+
+pub mod protocol;
 
 use pio::Program;
 

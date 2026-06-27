@@ -1,0 +1,117 @@
+//! The host<->firmware command protocol: ASCII, line-based, one command per line.
+//!
+//! Commands (case-insensitive keyword), terminated by `\n` (or `\r`):
+//!
+//! ```text
+//!   ID?                       -> "<banner>\n"   (e.g. "hwtools-harness rp2350 v0")
+//!   PING                      -> "PONG\n"
+//!   EMIT UART <hex> <baud>    -> "OK\n"          start streaming one byte as 8N1 UART
+//!   STOP                      -> "OK\n"          stop emission
+//!   BOOTSEL                   -> "OK\n"          then reboot into the USB bootloader
+//! ```
+//!
+//! Parsing is pure and `core`-only, so it is unit-tested on the host.
+
+/// A decoded command from the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Command {
+    /// Identify: reply with the firmware banner.
+    Id,
+    /// Liveness check: reply `PONG`.
+    Ping,
+    /// Stop any active emission.
+    Stop,
+    /// Reboot into the USB bootloader (for scripted reflashing).
+    Bootsel,
+    /// Continuously transmit `byte` as 8N1 UART at `baud`.
+    EmitUart { byte: u8, baud: u32 },
+}
+
+/// Why a line failed to parse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseError {
+    /// The line was empty/whitespace only.
+    Empty,
+    /// The keyword was not recognised.
+    Unknown,
+    /// The command was recognised but its arguments were missing/invalid.
+    BadArgs,
+}
+
+/// Parse one command line.
+pub fn parse(line: &str) -> Result<Command, ParseError> {
+    let line = line.trim();
+    if line.is_empty() {
+        return Err(ParseError::Empty);
+    }
+    let mut tokens = line.split_ascii_whitespace();
+    let keyword = tokens.next().ok_or(ParseError::Empty)?;
+
+    if keyword.eq_ignore_ascii_case("ID?") || keyword.eq_ignore_ascii_case("ID") {
+        return Ok(Command::Id);
+    }
+    if keyword.eq_ignore_ascii_case("PING") {
+        return Ok(Command::Ping);
+    }
+    if keyword.eq_ignore_ascii_case("STOP") {
+        return Ok(Command::Stop);
+    }
+    if keyword.eq_ignore_ascii_case("BOOTSEL") {
+        return Ok(Command::Bootsel);
+    }
+    if keyword.eq_ignore_ascii_case("EMIT") {
+        let sub = tokens.next().ok_or(ParseError::BadArgs)?;
+        if !sub.eq_ignore_ascii_case("UART") {
+            return Err(ParseError::BadArgs);
+        }
+        let byte_tok = tokens.next().ok_or(ParseError::BadArgs)?;
+        let baud_tok = tokens.next().ok_or(ParseError::BadArgs)?;
+        let byte = parse_hex_byte(byte_tok).ok_or(ParseError::BadArgs)?;
+        let baud = baud_tok.parse::<u32>().map_err(|_| ParseError::BadArgs)?;
+        if baud == 0 {
+            return Err(ParseError::BadArgs);
+        }
+        return Ok(Command::EmitUart { byte, baud });
+    }
+    Err(ParseError::Unknown)
+}
+
+fn parse_hex_byte(token: &str) -> Option<u8> {
+    let digits = token
+        .strip_prefix("0x")
+        .or_else(|| token.strip_prefix("0X"))
+        .unwrap_or(token);
+    u8::from_str_radix(digits, 16).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_control_keywords_case_insensitively() {
+        assert_eq!(parse("ID?"), Ok(Command::Id));
+        assert_eq!(parse("id"), Ok(Command::Id));
+        assert_eq!(parse("PING"), Ok(Command::Ping));
+        assert_eq!(parse("  ping \r"), Ok(Command::Ping));
+        assert_eq!(parse("STOP"), Ok(Command::Stop));
+        assert_eq!(parse("bootsel"), Ok(Command::Bootsel));
+    }
+
+    #[test]
+    fn parses_emit_uart_with_optional_hex_prefix() {
+        assert_eq!(parse("EMIT UART A5 9600"), Ok(Command::EmitUart { byte: 0xA5, baud: 9600 }));
+        assert_eq!(parse("emit uart 0xff 115200"), Ok(Command::EmitUart { byte: 0xFF, baud: 115200 }));
+    }
+
+    #[test]
+    fn rejects_bad_input() {
+        assert_eq!(parse(""), Err(ParseError::Empty));
+        assert_eq!(parse("   "), Err(ParseError::Empty));
+        assert_eq!(parse("frobnicate"), Err(ParseError::Unknown));
+        assert_eq!(parse("EMIT UART"), Err(ParseError::BadArgs));
+        assert_eq!(parse("EMIT SPI A5 9600"), Err(ParseError::BadArgs));
+        assert_eq!(parse("EMIT UART ZZ 9600"), Err(ParseError::BadArgs));
+        assert_eq!(parse("EMIT UART A5 0"), Err(ParseError::BadArgs));
+    }
+}
