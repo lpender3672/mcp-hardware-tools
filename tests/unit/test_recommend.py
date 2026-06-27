@@ -73,3 +73,38 @@ def test_autoset_widens_for_a_giant_signal() -> None:
     )
     assert result.widen_steps >= 1  # 5 V/div clipped an 80 Vpp signal; had to widen
     assert result.converged
+
+
+def test_recommend_opens_wide_on_a_clipped_channel() -> None:
+    # R1: a still-clipped channel can't be sized, so it is opened wide.
+    scope = SimulatedScope({CH1: Sine(amplitude_v=3.0, frequency_hz=1_000.0)})
+    clipped = {CH1: ChannelConfig(channel=CH1, scale_v_per_div=0.1)}  # clips
+    scope.configure_channel(clipped[CH1])
+    scope.configure_timebase(TimebaseConfig(scale_s_per_div=1e-3))
+    capture = scope.capture([CH1])
+    assert capture.waveforms[CH1].is_clipped
+
+    setup = recommend_setup(
+        capture,
+        channels=clipped,
+        timebase=TimebaseConfig(scale_s_per_div=1e-3),
+        trigger=_trigger(),
+        capabilities=DEFAULT_CAPABILITIES,
+        wide_scale_v_per_div=5.0,
+    )
+    assert setup.channels[CH1].scale_v_per_div == 5.0
+    assert setup.channels[CH1].offset_v == 0.0
+
+
+def test_autoset_gives_up_honestly_on_an_oversized_signal() -> None:
+    # AS3: a signal beyond the widest measurement range never de-clips.
+    scope = SimulatedScope({CH1: Sine(amplitude_v=2_000.0, frequency_hz=1_000.0)})  # 4 kVpp
+    result = autoset(
+        scope,
+        channels={CH1: ChannelConfig(channel=CH1, scale_v_per_div=0.1)},
+        timebase=TimebaseConfig(scale_s_per_div=2e-3),
+        trigger=_trigger(),
+        max_widen=3,
+    )
+    assert result.widen_steps == 3
+    assert not result.converged
