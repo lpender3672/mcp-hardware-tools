@@ -60,6 +60,7 @@ def decode_spi(
     miso_acc = 0
     count = 0
     word_start_s = 0.0
+    prev_idx: int | None = None
 
     for edge in sample_edges:
         idx = edge.index
@@ -67,7 +68,17 @@ def decode_spi(
             asserted = (not bool(cs.levels[idx])) if p.cs_active_low else bool(cs.levels[idx])
             if not asserted:
                 count = mosi_acc = miso_acc = 0  # drop any partial word
+                prev_idx = idx
                 continue
+            # A new transaction starts whenever CS deasserted since the previous
+            # clock edge — even across an idle gap where no clock edge fires, so
+            # word boundaries realign per CS assertion rather than running on.
+            if prev_idx is not None:
+                gap = cs.levels[prev_idx:idx]
+                deasserted_between = bool(gap.any()) if p.cs_active_low else bool((~gap).any())
+                if deasserted_between:
+                    count = mosi_acc = miso_acc = 0
+            prev_idx = idx
 
         if count == 0:
             word_start_s = edge.time_s

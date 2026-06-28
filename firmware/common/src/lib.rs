@@ -10,6 +10,7 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod pattern;
 pub mod protocol;
 
 use pio::Program;

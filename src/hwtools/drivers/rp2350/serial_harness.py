@@ -96,6 +96,14 @@ class SerialHarness(DigitalDUT):
         if reply != "OK":
             raise RuntimeError(f"EMIT SQUARE rejected: {reply!r}")
 
+    def start_spi(self) -> None:
+        if self._command("EMIT SPI") != "OK":
+            raise RuntimeError("EMIT SPI rejected")
+
+    def start_i2c(self) -> None:
+        if self._command("EMIT I2C") != "OK":
+            raise RuntimeError("EMIT I2C rejected")
+
     def stop(self) -> None:
         reply = self._command("STOP")
         if reply != "OK":

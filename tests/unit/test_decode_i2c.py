@@ -2,11 +2,31 @@
 
 from __future__ import annotations
 
+import numpy as np
 from hypothesis import given
 from hypothesis import strategies as st
 
 from hwtools.decode.i2c import decode_i2c
+from hwtools.model.ids import ChannelId
+from hwtools.model.waveform import DigitalTrace
 from tests.fixtures.signals import i2c_traces
+
+
+def _trace(channel: ChannelId, bits: list[int]) -> DigitalTrace:
+    return DigitalTrace(
+        channel=channel, levels=np.asarray(bits, dtype=np.bool_), t0_s=0.0, dt_s=1e-6
+    )
+
+
+def test_marginal_sda_edge_near_scl_glitch_is_not_start_stop() -> None:
+    # Regression (found on hardware): at coarse capture resolution an SDA edge can
+    # land on a one- or two-sample SCL "high" sliver next to an SCL transition.
+    # Without debounce the old decoder read that as a spurious START/STOP and
+    # truncated the real transaction. SCL is high at indices 2-3 only; the SDA
+    # fall there must be rejected, leaving no transaction.
+    scl = _trace(ChannelId.CH1, [0, 0, 1, 1, 0, 0])
+    sda = _trace(ChannelId.CH2, [1, 1, 1, 0, 0, 0])
+    assert decode_i2c(sda, scl) == []
 
 
 def test_write_transaction_address_and_data() -> None:

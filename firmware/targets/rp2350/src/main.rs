@@ -1,17 +1,15 @@
 //! RP2350 (Raspberry Pi Pico 2) harness target.
 //!
-//! Emits a known UART stimulus via PIO on **GP0** (CH1) and exposes a USB-CDC
-//! command channel so the host can identify the device, ping it, and reboot it
-//! into the USB bootloader for scripted reflashing. Subsequent chunks add EMIT
-//! UART / STOP to control the stimulus from the host.
+//! All stimuli are emitted through one PIO "pin player": a tiny state machine
+//! that clocks 3-bit samples out of its FIFO onto the shared pins GP2/GP3/GP4 at
+//! a fixed rate. The protocol *timing* lives in `hwtools_harness_common::pattern`
+//! (pure, host-tested); the main loop just streams the active pattern buffer and
+//! regenerates it on each EMIT command. One pin set serves every protocol, so the
+//! scope probes never move: GP2 = UART tx / square / SPI clk / I2C scl (CH1),
+//! GP3 = SPI mosi / I2C sda (CH2), GP4 = SPI cs (CH3).
 //!
-//! USB is serviced entirely in the `USBCTRL_IRQ` interrupt, which shuttles bytes
-//! between the CDC endpoints and two lock-free SPSC ring buffers (RX: ISR ->
-//! main, TX: main -> ISR). The main loop drives the PIO emitter and parses
-//! whole command lines out of the RX ring.
-//!
-//! HAL-specific wiring only; the PIO program, byte, baud, divider math, and the
-//! command parser come from `hwtools_harness_common`.
+//! A USB-CDC command channel (serviced in USBCTRL_IRQ via lock-free SPSC rings)
+//! drives it; see `hwtools_harness_common::protocol`.
 
 #![no_std]
 #![no_main]
@@ -22,7 +20,6 @@ use panic_halt as _;
 use rp235x_hal as hal;
 
 use cortex_m::peripheral::NVIC;
-use embedded_hal::pwm::SetDutyCycle;
 use hal::pac::interrupt;
 use hal::pio::{PIOExt, ShiftDirection};
 use hal::Clock;
@@ -33,6 +30,7 @@ use usb_device::prelude::UsbDevice;
 use usbd_serial::SerialPort;
 
 use hwtools_harness_common as harness;
+use hwtools_harness_common::pattern::{self, Samples};
 use hwtools_harness_common::protocol::{parse, Command};
 
 /// 12 MHz crystal on the Pico 2.
@@ -41,6 +39,8 @@ const XOSC_CRYSTAL_FREQ: u32 = 12_000_000;
 const RING: usize = 256;
 /// Identity banner returned for `ID?`.
 const BANNER: &[u8] = b"hwtools-harness rp2350 v0\n";
+/// GP2 is the lowest player pin; GP3, GP4 follow.
+const PLAYER_PIN_BASE: u8 = 2;
 
 /// Boot image header the RP2350 bootrom scans for.
 #[link_section = ".start_block"]
@@ -49,8 +49,6 @@ pub static IMAGE_DEF: hal::block::ImageDef = hal::block::ImageDef::secure_exe();
 
 type Bus = hal::usb::UsbBus;
 
-// USB objects are touched only by the ISR after init; the ring halves below are
-// single-owner per context. Accessed via raw pointers to avoid `static_mut_refs`.
 static mut USB_BUS: Option<UsbBusAllocator<Bus>> = None;
 static mut USB_DEV: Option<UsbDevice<'static, Bus>> = None;
 static mut USB_SERIAL: Option<SerialPort<'static, Bus>> = None;
@@ -75,6 +73,7 @@ fn main() -> ! {
     )
     .ok()
     .unwrap();
+    let sys_hz = clocks.system_clock.freq().to_Hz();
 
     let sio = hal::Sio::new(pac.SIO);
     let pins = hal::gpio::Pins::new(
@@ -84,28 +83,31 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
-    // --- PIO UART-TX emitter on GP0 (scope CH1) -----------------------------
-    let tx_pin = pins.gpio0.into_function::<hal::gpio::FunctionPio0>();
-    let tx_id = tx_pin.id().num;
-    let program = harness::uart_tx_program();
+    // --- PIO pin player on GP2/GP3/GP4 --------------------------------------
+    let _p2 = pins.gpio2.into_function::<hal::gpio::FunctionPio0>();
+    let _p3 = pins.gpio3.into_function::<hal::gpio::FunctionPio0>();
+    let _p4 = pins.gpio4.into_function::<hal::gpio::FunctionPio0>();
+
+    // Clock 3 pins from each FIFO word (8 samples * 3 bits = 24 bits) at the
+    // sample rate; the buffer's timing does the rest.
+    let program = pattern::player_program();
     let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
     let installed = pio.install(&program).unwrap();
-    let sys_hz = clocks.system_clock.freq().to_Hz();
-    let (int_div, frac_div) = harness::uart_clock_divider(sys_hz);
-    let (mut sm, _rx, mut pio_tx) = hal::pio::PIOBuilder::from_installed_program(installed)
-        .out_pins(tx_id, 1)
-        .side_set_pin_base(tx_id)
-        .clock_divisor_fixed_point(int_div, frac_div)
+    // The player is 2 instructions per sample (out pins + out null), so the SM
+    // clock must be twice the sample rate.
+    let divisor = (sys_hz / (2 * pattern::SAMPLE_RATE_HZ)) as u16;
+    let (mut sm, _rx, mut player_tx) = hal::pio::PIOBuilder::from_installed_program(installed)
+        .out_pins(PLAYER_PIN_BASE, 3)
+        .clock_divisor_fixed_point(divisor, 0)
         .out_shift_direction(ShiftDirection::Right)
-        .autopull(false)
+        .autopull(true)
         .build(sm0);
-    sm.set_pindirs([(tx_id, hal::pio::PinDir::Output)]);
-    let mut sm = sm.start();
-
-    // --- PWM square-wave generator on GP1 (scope CH2) -----------------------
-    let pwm_slices = hal::pwm::Slices::new(pac.PWM, &mut pac.RESETS);
-    let mut pwm = pwm_slices.pwm0; // slice 0, channel B -> GP1
-    let _square_pin = pwm.channel_b.output_to(pins.gpio1);
+    sm.set_pindirs([
+        (PLAYER_PIN_BASE, hal::pio::PinDir::Output),
+        (PLAYER_PIN_BASE + 1, hal::pio::PinDir::Output),
+        (PLAYER_PIN_BASE + 2, hal::pio::PinDir::Output),
+    ]);
+    let _sm = sm.start();
 
     // --- USB-CDC command channel --------------------------------------------
     let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
@@ -115,7 +117,6 @@ fn main() -> ! {
         true,
         &mut pac.RESETS,
     ));
-    // SAFETY: written once here before the USB ISR is unmasked.
     unsafe { USB_BUS = Some(usb_bus) };
     let bus_ref: &'static UsbBusAllocator<Bus> = unsafe { (*addr_of_mut!(USB_BUS)).as_ref().unwrap() };
 
@@ -131,7 +132,6 @@ fn main() -> ! {
 
     let (rx_prod, mut rx_cons) = unsafe { (*addr_of_mut!(RX_Q)).split() };
     let (mut tx_prod, tx_cons) = unsafe { (*addr_of_mut!(TX_Q)).split() };
-    // SAFETY: written once before unmasking; thereafter the ISR owns these halves.
     unsafe {
         USB_SERIAL = Some(serial);
         USB_DEV = Some(dev);
@@ -140,19 +140,24 @@ fn main() -> ! {
         NVIC::unmask(hal::pac::Interrupt::USBCTRL_IRQ);
     }
 
-    let mut line: heapless::Vec<u8, 128> = heapless::Vec::new();
-    // Emission state. Defaults to streaming the known byte so the device is a
-    // useful source the moment it boots; the host can retarget it via EMIT/STOP.
-    let mut emitting = true;
-    let mut emit_byte = harness::STIMULUS_BYTE;
+    // --- emission state ------------------------------------------------------
+    // Boots streaming the known UART byte on GP0... GP2 (CH1).
+    let mut buffer: Samples = pattern::uart(harness::STIMULUS_BYTE as u8, 9600);
+    let mut index: usize = 0;
+    let mut pending: Option<u32> = None;
+    let mut active = true;
 
+    let mut line: heapless::Vec<u8, 128> = heapless::Vec::new();
     loop {
-        if emitting {
-            // ~2 ms gap leaves the line idle (mark) between bytes for clean framing.
-            while !pio_tx.write(emit_byte) {}
-            cortex_m::asm::delay(300_000);
-        } else {
-            cortex_m::asm::delay(100_000); // idle; the PIO stalls with the line high
+        if active {
+            // Top up the player FIFO; a rejected word is held for next time.
+            loop {
+                let word = pending.take().unwrap_or_else(|| pack8(&buffer, &mut index));
+                if !player_tx.write(word) {
+                    pending = Some(word);
+                    break;
+                }
+            }
         }
 
         while let Some(byte) = rx_cons.dequeue() {
@@ -160,42 +165,38 @@ fn main() -> ! {
                 b'\n' | b'\r' => {
                     if !line.is_empty() {
                         let text = core::str::from_utf8(&line).unwrap_or("");
+                        let mut load = |samples: Samples| {
+                            buffer = samples;
+                            index = 0;
+                            pending = None;
+                            active = true;
+                        };
                         match parse(text) {
                             Ok(Command::Id) => reply(&mut tx_prod, BANNER),
                             Ok(Command::Ping) => reply(&mut tx_prod, b"PONG\n"),
                             Ok(Command::Stop) => {
-                                emitting = false;
-                                pwm.disable();
+                                active = false;
                                 reply(&mut tx_prod, b"OK\n");
                             }
                             Ok(Command::EmitUart { byte, baud }) => {
-                                let (int_div, frac_div) =
-                                    harness::uart_clock_divider_for(sys_hz, baud);
-                                sm.clock_divisor_fixed_point(int_div, frac_div);
-                                emit_byte = byte as u32;
-                                emitting = true;
+                                load(pattern::uart(byte, baud));
                                 reply(&mut tx_prod, b"OK\n");
                             }
                             Ok(Command::EmitSquare { freq_hz, duty_pct }) => {
-                                let p = harness::square_pwm_params(sys_hz, freq_hz, duty_pct);
-                                pwm.set_div_int(p.div_int);
-                                pwm.set_div_frac(0);
-                                pwm.set_top(p.top);
-                                // 100% / 0% are true DC (constant high / low); a
-                                // clamped compare would leave a one-count glitch.
-                                let _ = if duty_pct >= 100 {
-                                    pwm.channel_b.set_duty_cycle_fully_on()
-                                } else if duty_pct == 0 {
-                                    pwm.channel_b.set_duty_cycle_fully_off()
-                                } else {
-                                    pwm.channel_b.set_duty_cycle(p.compare)
-                                };
-                                pwm.enable();
+                                load(pattern::square(freq_hz, duty_pct));
+                                reply(&mut tx_prod, b"OK\n");
+                            }
+                            Ok(Command::EmitSpi) => {
+                                load(pattern::spi());
+                                reply(&mut tx_prod, b"OK\n");
+                            }
+                            Ok(Command::EmitI2c) => {
+                                load(pattern::i2c());
                                 reply(&mut tx_prod, b"OK\n");
                             }
                             Ok(Command::Bootsel) => {
                                 reply(&mut tx_prod, b"OK\n");
-                                cortex_m::asm::delay(2_000_000); // flush reply over USB
+                                cortex_m::asm::delay(2_000_000);
                                 hal::reboot::reboot(
                                     hal::reboot::RebootKind::BootSel {
                                         picoboot_disabled: false,
@@ -211,12 +212,25 @@ fn main() -> ! {
                 }
                 _ => {
                     if line.push(byte).is_err() {
-                        line.clear(); // overlong line: drop and resync
+                        line.clear();
                     }
                 }
             }
         }
     }
+}
+
+/// Pack the next 8 samples (one 4-bit nibble each, LSB-first) into one FIFO word,
+/// looping the buffer so the pattern repeats seamlessly. The player outputs 3 of
+/// each nibble's bits and discards the 4th, so 8 samples fill one 32-bit word.
+fn pack8(buffer: &Samples, index: &mut usize) -> u32 {
+    let len = buffer.len().max(1);
+    let mut word = 0u32;
+    for i in 0..8 {
+        word |= ((buffer[*index % len] & 0b111) as u32) << (i * 4);
+        *index = (*index + 1) % len;
+    }
+    word
 }
 
 /// Queue bytes for transmission and nudge the USB ISR to flush them.
@@ -233,8 +247,6 @@ fn reply(tx: &mut Producer<'static, u8>, bytes: &[u8]) {
 /// any queued TX bytes out the CDC port.
 #[interrupt]
 fn USBCTRL_IRQ() {
-    // SAFETY: these globals are initialised before the interrupt is unmasked and
-    // are only accessed here afterwards.
     let dev = unsafe { (*addr_of_mut!(USB_DEV)).as_mut().unwrap() };
     let serial = unsafe { (*addr_of_mut!(USB_SERIAL)).as_mut().unwrap() };
     let rx_prod = unsafe { (*addr_of_mut!(RX_PROD)).as_mut().unwrap() };

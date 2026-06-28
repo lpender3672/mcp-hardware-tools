@@ -7,9 +7,14 @@
 //!   PING                       -> "PONG\n"
 //!   EMIT UART <hex> <baud>     -> "OK\n"   stream one byte as 8N1 UART on GP0
 //!   EMIT SQUARE <hz> <duty%>   -> "OK\n"   PWM square on GP1 at <hz>, <duty> percent
+//!   EMIT SPI                   -> "OK\n"   fixed SPI transaction: clk GP2, mosi GP3, cs GP4
+//!   EMIT I2C                   -> "OK\n"   fixed I2C transaction: scl GP2, sda GP3
 //!   STOP                       -> "OK\n"   stop emission
 //!   BOOTSEL                    -> "OK\n"   then reboot into the USB bootloader
 //! ```
+//!
+//! SPI/I2C emit a *fixed, known* transaction (payloads below) so the host can
+//! validate decode against ground truth without variable-length parsing.
 //!
 //! Parsing is pure and `core`-only, so it is unit-tested on the host.
 
@@ -28,7 +33,17 @@ pub enum Command {
     EmitUart { byte: u8, baud: u32 },
     /// Output a PWM square wave at `freq_hz` with `duty_pct` percent duty.
     EmitSquare { freq_hz: u32, duty_pct: u32 },
+    /// Emit the fixed SPI test transaction (clk GP2, mosi GP3, cs GP4).
+    EmitSpi,
+    /// Emit the fixed I2C test transaction (scl GP2, sda GP3).
+    EmitI2c,
 }
+
+/// Fixed SPI payload (MSB-first, mode 0) the harness clocks out.
+pub const SPI_TEST_BYTES: [u8; 2] = [0xA5, 0x3C];
+/// Fixed I2C target address (7-bit) and payload the harness writes.
+pub const I2C_TEST_ADDR: u8 = 0x50;
+pub const I2C_TEST_DATA: [u8; 2] = [0xDE, 0xAD];
 
 /// Why a line failed to parse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +99,12 @@ pub fn parse(line: &str) -> Result<Command, ParseError> {
             }
             return Ok(Command::EmitSquare { freq_hz, duty_pct });
         }
+        if sub.eq_ignore_ascii_case("SPI") {
+            return Ok(Command::EmitSpi);
+        }
+        if sub.eq_ignore_ascii_case("I2C") {
+            return Ok(Command::EmitI2c);
+        }
         return Err(ParseError::BadArgs);
     }
     Err(ParseError::Unknown)
@@ -124,12 +145,18 @@ mod tests {
     }
 
     #[test]
+    fn parses_emit_spi_and_i2c() {
+        assert_eq!(parse("EMIT SPI"), Ok(Command::EmitSpi));
+        assert_eq!(parse("emit i2c"), Ok(Command::EmitI2c));
+    }
+
+    #[test]
     fn rejects_bad_input() {
         assert_eq!(parse(""), Err(ParseError::Empty));
         assert_eq!(parse("   "), Err(ParseError::Empty));
         assert_eq!(parse("frobnicate"), Err(ParseError::Unknown));
         assert_eq!(parse("EMIT UART"), Err(ParseError::BadArgs));
-        assert_eq!(parse("EMIT SPI A5 9600"), Err(ParseError::BadArgs));
+        assert_eq!(parse("EMIT FROB 1 2"), Err(ParseError::BadArgs));
         assert_eq!(parse("EMIT UART ZZ 9600"), Err(ParseError::BadArgs));
         assert_eq!(parse("EMIT UART A5 0"), Err(ParseError::BadArgs));
         assert_eq!(parse("EMIT SQUARE 1000 150"), Err(ParseError::BadArgs));

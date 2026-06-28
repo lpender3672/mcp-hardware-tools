@@ -2,11 +2,43 @@
 
 from __future__ import annotations
 
+import numpy as np
 from hypothesis import given
 from hypothesis import strategies as st
 
 from hwtools.decode.spi import SpiParams, decode_spi, sample_edge_is_rising
+from hwtools.model.waveform import DigitalTrace
 from tests.fixtures.signals import spi_traces
+
+
+def test_cs_reasserts_realign_word_boundaries() -> None:
+    # Regression (found on hardware): a partial transaction, then an idle gap
+    # (CS deasserted with the clock idle, so no clock edge fires), then a full
+    # transaction. The decoder must drop the partial and reframe on the new CS
+    # assertion rather than running the bit stream on.
+    sph = 4
+    clk_f, mosi_f, _, cs_f = spi_traces([0xA5, 0x3C], with_cs=True, sph=sph)
+    assert cs_f is not None
+    partial_clk = np.tile(np.concatenate([np.zeros(sph, bool), np.ones(sph, bool)]), 3)
+    partial = partial_clk.size
+    gap = 8
+
+    def join(lead_clk: bool, frame: DigitalTrace, cs: bool) -> DigitalTrace:
+        levels = np.concatenate(
+            [
+                np.full(partial, lead_clk, dtype=bool) if cs else partial_clk,
+                np.full(gap, cs, dtype=bool),
+                frame.levels,
+            ]
+        )
+        return DigitalTrace(channel=frame.channel, levels=levels, t0_s=0.0, dt_s=frame.dt_s)
+
+    clk = join(False, clk_f, cs=False)
+    mosi = join(True, mosi_f, cs=False)  # garbage during the partial
+    cs = join(False, cs_f, cs=True)  # CS deasserted (high) during the gap
+
+    words = decode_spi(clk, mosi=mosi, cs=cs, params=SpiParams(cs_active_low=True))
+    assert [w.mosi for w in words] == [0xA5, 0x3C]
 
 
 def test_mode_sampling_edges() -> None:

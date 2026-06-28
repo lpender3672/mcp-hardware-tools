@@ -8,14 +8,24 @@ inputs, typed :class:`~hwtools.decode.frames.I2cTransaction` list out.
 
 A repeated START (without an intervening STOP) is treated as the end of the
 current transaction and the beginning of a new one.
+
+START/STOP detection is *debounced*: SCL must be stably high for a guard window
+on both sides of the SDA edge. At coarse capture resolution an SDA edge that
+lands a sample or two away from an SCL transition would otherwise masquerade as
+a spurious START/STOP and truncate the real transaction.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from hwtools.decode.frames import I2cByte, I2cTransaction
 from hwtools.model.waveform import DigitalTrace
+
+#: Samples SCL must hold high either side of an SDA edge to count as START/STOP.
+START_STOP_GUARD = 2
 
 
 @dataclass
@@ -31,10 +41,23 @@ class _Builder:
         )
 
 
-def decode_i2c(sda: DigitalTrace, scl: DigitalTrace) -> list[I2cTransaction]:
+def decode_i2c(
+    sda: DigitalTrace, scl: DigitalTrace, *, start_stop_guard: int = START_STOP_GUARD
+) -> list[I2cTransaction]:
     """Recover I²C transactions from the SDA/SCL pair."""
     if sda.n != scl.n:
         raise ValueError("sda and scl must share the same sample grid")
+
+    scl_high = np.asarray(scl.levels, dtype=np.bool_)
+
+    def scl_stable_high(i: int) -> bool:
+        """True if SCL is high for ``start_stop_guard`` samples either side of the
+        SDA edge between ``i-1`` and ``i``. Edges too near the capture boundary to
+        confirm are rejected (a START/STOP there is a partial frame anyway)."""
+        g = start_stop_guard
+        if i - g < 0 or i + g > scl_high.size:
+            return False
+        return bool(scl_high[i - g : i + g].all())
 
     transactions: list[I2cTransaction] = []
     builder: _Builder | None = None
@@ -51,8 +74,8 @@ def decode_i2c(sda: DigitalTrace, scl: DigitalTrace) -> list[I2cTransaction]:
         scl_prev, scl_cur = bool(scl.levels[i - 1]), bool(scl.levels[i])
         sda_prev, sda_cur = bool(sda.levels[i - 1]), bool(sda.levels[i])
 
-        # START / STOP: an SDA edge while SCL is held high.
-        if scl_prev and scl_cur and sda_prev != sda_cur:
+        # START / STOP: an SDA edge while SCL is held *stably* high.
+        if scl_prev and scl_cur and sda_prev != sda_cur and scl_stable_high(i):
             if not sda_cur:  # SDA falling -> START (or repeated START)
                 if builder is not None and builder.bytes:
                     transactions.append(builder.finish())

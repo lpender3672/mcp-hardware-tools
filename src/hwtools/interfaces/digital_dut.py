@@ -38,6 +38,14 @@ class DigitalDUT(ABC):
         """Output a square wave at ``freq_hz`` with ``duty_pct`` percent duty."""
 
     @abstractmethod
+    def start_spi(self) -> None:
+        """Emit the fixed SPI test transaction (clk/mosi/cs)."""
+
+    @abstractmethod
+    def start_i2c(self) -> None:
+        """Emit the fixed I2C test transaction (scl/sda)."""
+
+    @abstractmethod
     def stop(self) -> None:
         """Stop any active stimulus (the line returns to idle)."""
 

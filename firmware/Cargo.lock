@@ -367,6 +367,7 @@ dependencies = [
 name = "hwtools-harness-common"
 version = "0.0.0"
 dependencies = [
+ "heapless 0.9.3",
  "pio",
 ]
 

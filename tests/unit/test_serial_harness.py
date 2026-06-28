@@ -56,6 +56,15 @@ def test_start_square_formats_command() -> None:
     assert fake.commands == ["EMIT SQUARE 1000 25"]
 
 
+def test_spi_and_i2c_commands() -> None:
+    fake = FakeSerial(["OK", "OK"])
+    harness = SerialHarness.from_serial(fake)
+    harness.open()
+    harness.start_spi()
+    harness.start_i2c()
+    assert fake.commands == ["EMIT SPI", "EMIT I2C"]
+
+
 def test_emit_rejection_raises() -> None:
     fake = FakeSerial(["ERR"])
     harness = SerialHarness.from_serial(fake)
