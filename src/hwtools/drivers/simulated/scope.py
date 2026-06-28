@@ -140,7 +140,10 @@ class SimulatedScope(Oscilloscope):
 
     # -- readout --------------------------------------------------------------
 
-    def capture(self, channels: Sequence[ChannelId]) -> Capture:
+    def capture(self, channels: Sequence[ChannelId], *, deep: bool = True) -> Capture:
+        # The simulated scope synthesises its full memory either way; ``deep`` only
+        # matters on real hardware (screen-decimated vs. full-memory download).
+        del deep
         window_s = self._timebase.scale_s_per_div * self._caps.horizontal_divisions
         dt_s = window_s / self._n_points
         triggered, t0_s = self._resolve_trigger(window_s, dt_s)

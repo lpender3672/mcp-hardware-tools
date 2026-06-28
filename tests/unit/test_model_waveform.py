@@ -55,6 +55,33 @@ def test_waveform_serializes_summary_not_raw_samples() -> None:
     }
 
 
+def test_clipping_is_a_population_not_a_single_sample() -> None:
+    # 1000 samples mid-range with TWO at the rail = 0.2% — a transient overshoot,
+    # not clipping. The old "any sample at the rail" test would have flagged it.
+    rails = (-5.0, 5.0)
+    samples = np.zeros(1000)
+    samples[0] = 5.0  # a lone rail-grazing spike
+    samples[1] = 5.0
+    wf = Waveform(channel=ChannelId.CH1, samples=samples, t0_s=0.0, dt_s=1e-6, saturation=rails)
+    assert wf.clipped_fraction == pytest.approx(0.002)
+    assert wf.is_clipped is False
+
+
+def test_clipping_flags_a_sustained_rail_population() -> None:
+    # A flat-topped signal: 30% of samples pinned at the high rail -> clipped.
+    rails = (-5.0, 5.0)
+    samples = np.concatenate([np.full(300, 5.0), np.zeros(700)])
+    wf = Waveform(channel=ChannelId.CH1, samples=samples, t0_s=0.0, dt_s=1e-6, saturation=rails)
+    assert wf.clipped_fraction == pytest.approx(0.3)
+    assert wf.is_clipped is True
+
+
+def test_clipped_fraction_zero_without_known_rails() -> None:
+    wf = Waveform(channel=ChannelId.CH1, samples=[0.0, 1.0, 2.0], t0_s=0.0, dt_s=1e-6)
+    assert wf.clipped_fraction == 0.0
+    assert wf.is_clipped is False
+
+
 def test_digital_trace_counts_transitions() -> None:
     trace = DigitalTrace(
         channel=ChannelId.CH1, levels=[0, 1, 1, 0, 1], t0_s=0.0, dt_s=1e-6

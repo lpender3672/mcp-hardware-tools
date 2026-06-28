@@ -82,8 +82,14 @@ def test_configure_trigger_maps_enums() -> None:
     assert ":TRIGger:SWEep SINGle" in fake.log
 
 
+def _display(states: dict[int, str]) -> dict[str, str]:
+    """Scripted :CHANnel<n>:DISPlay? replies for the four analog channels."""
+    return {f":CHANnel{n}:DISPlay?": states.get(n, "0") for n in (1, 2, 3, 4)}
+
+
 def test_configure_acquire_average_includes_count() -> None:
-    scope, fake = _scope()
+    # one channel on -> 12000 is a legal record length
+    scope, fake = _scope(queries=_display({1: "1"}))
     scope.configure_acquire(AcquireConfig(type=AcqType.AVERAGE, averages=16, memory_depth=12000))
     assert ":ACQuire:TYPE AVERages" in fake.log
     assert ":ACQuire:AVERages 16" in fake.log
@@ -97,6 +103,20 @@ def test_acquire_auto_memory_depth() -> None:
     assert not any(cmd.startswith(":ACQuire:AVERages") for cmd in fake.log)
 
 
+def test_memory_depth_validated_against_enabled_channel_count() -> None:
+    # two channels on -> 120000 is NOT legal (the 2-channel set is 6k/60k/600k/...).
+    # The driver must refuse it rather than send a command that beeps/desyncs the scope.
+    scope, _ = _scope(queries=_display({1: "1", 2: "1"}))
+    with pytest.raises(ValueError, match="not a legal record length with 2 analog"):
+        scope.configure_acquire(AcquireConfig(memory_depth=120_000))
+
+
+def test_memory_depth_legal_for_two_channels_is_sent() -> None:
+    scope, fake = _scope(queries=_display({1: "1", 2: "1"}))
+    scope.configure_acquire(AcquireConfig(memory_depth=60_000))  # legal for 2 channels
+    assert ":ACQuire:MDEPth 60000" in fake.log
+
+
 @pytest.mark.parametrize(
     ("reply", "expected"),
     [("TD", TriggerStatus.TRIGGERED), ("STOP", TriggerStatus.STOP), ("auto", TriggerStatus.AUTO)],
@@ -104,6 +124,109 @@ def test_acquire_auto_memory_depth() -> None:
 def test_trigger_status_parsing(reply: str, expected: TriggerStatus) -> None:
     scope, _ = _scope(queries={":TRIGger:STATus?": reply})
     assert scope.trigger_status() is expected
+
+
+class _PagingTransport(FakeTransport):
+    """A transport that serves ``:WAVeform:DATA?`` from a backing buffer, sliced
+    by the most recent ``:WAVeform:STARt``/``:STOP`` window — so the driver's deep
+    paging loop can be exercised end to end."""
+
+    def __init__(self, memory: bytes, queries: dict[str, str]) -> None:
+        super().__init__(queries=queries)
+        self._memory = memory
+        self._start = 1
+        self._stop = len(memory)
+
+    def write(self, command: str) -> None:
+        super().write(command)
+        if command.startswith(":WAVeform:STARt "):
+            self._start = int(command.rsplit(" ", 1)[1])
+        elif command.startswith(":WAVeform:STOP "):
+            self._stop = int(command.rsplit(" ", 1)[1])
+
+    def query_block(self, command: str) -> bytes:
+        self.log.append(command)
+        return self._memory[self._start - 1 : self._stop]
+
+
+def test_deep_capture_pages_full_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 7 points read in 3-point chunks: 3 + 3 + 1 — the loop must stitch them back
+    # into the full memory, not just the first screen-sized block.
+    monkeypatch.setattr(DS1054Z, "_RAW_CHUNK", 3)
+    memory = bytes([125, 126, 127, 128, 129, 130, 131])
+    preamble = f"0,0,{len(memory)},1,1.000000e-06,0,0,1.000000e+00,125,0"
+    fake = _PagingTransport(
+        memory,
+        queries={
+            ":ACQuire:SRATe?": "1.000000e+09",
+            ":WAVeform:PREamble?": preamble,
+            ":TRIGger:STATus?": "STOP",
+        },
+    )
+    scope = DS1054Z(fake)
+
+    cap = scope.capture([ChannelId.CH1])
+
+    wf = cap.waveforms[ChannelId.CH1]
+    assert wf.samples.size == len(memory)
+    np.testing.assert_allclose(wf.samples, np.arange(7, dtype=np.float64))
+    # deep read stops the scope first and pages in RAW mode
+    assert ":STOP" in fake.log
+    assert ":WAVeform:MODE RAW" in fake.log
+    assert fake.log.count(":WAVeform:DATA?") == 3  # 3 chunks for 7 points @ chunk=3
+
+
+def test_deep_capture_throws_when_no_deep_record() -> None:
+    # RAW points == 0 means a free-running/untriggered acquisition with no deep
+    # memory. The tool must surface that, not silently fall back to the screen trace.
+    preamble = "0,0,0,1,1.000000e-06,0,0,1.000000e+00,125,0"
+    fake = _PagingTransport(
+        b"",
+        queries={
+            ":ACQuire:SRATe?": "1.000000e+09",
+            ":WAVeform:PREamble?": preamble,
+            ":TRIGger:STATus?": "STOP",
+        },
+    )
+    scope = DS1054Z(fake)
+    with pytest.raises(RuntimeError, match="no deep acquisition in memory"):
+        scope.capture([ChannelId.CH1])
+
+
+def test_deep_capture_rejects_short_memory_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(DS1054Z, "_RAW_CHUNK", 100)
+    # preamble promises 8 points but memory only holds 4 -> must not pass silently.
+    preamble = "0,0,8,1,1.000000e-06,0,0,1.000000e+00,125,0"
+    fake = _PagingTransport(
+        bytes([125, 126, 127, 128]),
+        queries={
+            ":ACQuire:SRATe?": "1.000000e+09",
+            ":WAVeform:PREamble?": preamble,
+            ":TRIGger:STATus?": "STOP",
+        },
+    )
+    scope = DS1054Z(fake)
+    with pytest.raises(OSError, match="short-read"):
+        scope.capture([ChannelId.CH1])
+
+
+def test_screen_capture_uses_normal_mode() -> None:
+    preamble = "0,0,4,1,1.000000e-06,-2.000000e-06,0,4.000000e-02,125,0"
+    scope, fake = _scope(
+        queries={
+            ":ACQuire:SRATe?": "1.000000e+09",
+            ":WAVeform:PREamble?": preamble,
+            ":TRIGger:STATus?": "STOP",
+        },
+        blocks={":WAVeform:DATA?": bytes([125, 150, 100, 200])},
+    )
+
+    cap = scope.capture([ChannelId.CH1], deep=False)
+
+    assert ":WAVeform:MODE NORMal" in fake.log
+    assert ":WAVeform:MODE RAW" not in fake.log
+    assert ":STOP" not in fake.log  # screen read leaves the run state alone
+    np.testing.assert_allclose(cap.waveforms[ChannelId.CH1].samples, [0.0, 1.0, -1.0, 3.0])
 
 
 def test_capture_scales_samples_from_preamble() -> None:

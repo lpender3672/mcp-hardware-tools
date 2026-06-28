@@ -23,10 +23,12 @@ from hwtools.decode.threshold import threshold
 from hwtools.decode.uart import UartParams, decode_uart
 from hwtools.drivers.rigol.ds1054z import DS1054Z
 from hwtools.drivers.rp2350.serial_harness import SerialHarness, find_pico_port
+from hwtools.model.acquire import AcquireConfig
 from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, Coupling, Slope, SweepMode
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
+from tests.hardware._acquire import acquire_single
 
 SCOPE_HOST = os.environ.get("HWTOOLS_SCOPE_HOST", "192.168.1.214")
 
@@ -49,6 +51,10 @@ def test_host_commanded_uart_round_trips_through_scope() -> None:
         scope = DS1054Z.over_tcp(SCOPE_HOST)
         try:
             with scope:
+                for ch in (ChannelId.CH2, ChannelId.CH3, ChannelId.CH4):
+                    scope.configure_channel(
+                        ChannelConfig(channel=ch, scale_v_per_div=1.0, enabled=False)
+                    )
                 scope.configure_channel(
                     ChannelConfig(
                         channel=ChannelId.CH1,
@@ -57,17 +63,16 @@ def test_host_commanded_uart_round_trips_through_scope() -> None:
                         probe_ratio=10.0,
                     )
                 )
-                # 2 ms/div -> ~5 samples/bit at 9600 and several bytes in the window.
+                scope.configure_acquire(AcquireConfig(memory_depth=12_000))  # legal for 1 channel
+                # 2 ms/div -> deep 12k pts ~= 2 us/sample, ~50 samples/bit at 9600.
                 scope.configure_timebase(TimebaseConfig(scale_s_per_div=2e-3))
                 scope.configure_trigger(
                     TriggerConfig(
                         trigger=EdgeTrigger(source=ChannelId.CH1, level_v=1.5, slope=Slope.FALLING),
-                        sweep=SweepMode.AUTO,
+                        sweep=SweepMode.SINGLE,
                     )
                 )
-                scope.run()
-                time.sleep(0.5)
-                cap = scope.capture([ChannelId.CH1])
+                cap = acquire_single(scope, [ChannelId.CH1])  # single-shot, deep RAW read
         finally:
             harness.stop()
 

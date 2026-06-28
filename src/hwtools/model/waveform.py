@@ -20,6 +20,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_valid
 
 from hwtools.model.ids import ChannelId
 
+#: Fraction of samples at a rail above which a waveform counts as clipped. A few
+#: rail-grazing samples (logic-edge overshoot, a lone transient) stay below this;
+#: real flat-topping piles a sustained population against the rail.
+CLIP_FRACTION_THRESHOLD = 0.01
+
 
 def _as_1d_float(value: Any) -> npt.NDArray[np.float64]:
     arr = np.asarray(value, dtype=np.float64)
@@ -51,14 +56,36 @@ class Waveform(BaseModel):
         "A sample at a rail means the true signal was clipped there.",
     )
 
+    def fraction_beyond_rails(
+        self, low: float, high: float, *, margin_frac: float = 0.005
+    ) -> float:
+        """Fraction of samples sitting within ``margin_frac`` of either rail.
+
+        Clipping is flat-topping — a *population* of samples piled against a rail —
+        not a single excursion. This is the percentile that distinguishes real
+        clipping from a few rail-grazing samples (e.g. logic-edge overshoot).
+        """
+        if self.n == 0:
+            return 0.0
+        margin = (high - low) * margin_frac
+        at_rail = (self.samples >= high - margin) | (self.samples <= low + margin)
+        return float(np.count_nonzero(at_rail)) / self.n
+
+    @property
+    def clipped_fraction(self) -> float:
+        """Fraction of samples at the known digitiser saturation rails (0 if unknown)."""
+        if self.saturation is None:
+            return 0.0
+        return self.fraction_beyond_rails(*self.saturation)
+
     @property
     def is_clipped(self) -> bool:
-        """Whether any sample reaches the known saturation rails."""
-        if self.saturation is None or self.n == 0:
-            return False
-        low, high = self.saturation
-        margin = (high - low) * 0.005
-        return self.vmax >= high - margin or self.vmin <= low + margin
+        """Whether a *meaningful fraction* of samples reach the saturation rails.
+
+        A handful of rail-grazing samples (transient overshoot) does not count —
+        only a sustained population at the rail (see :data:`CLIP_FRACTION_THRESHOLD`).
+        """
+        return self.clipped_fraction >= CLIP_FRACTION_THRESHOLD
 
     @field_validator("samples", mode="before")
     @classmethod

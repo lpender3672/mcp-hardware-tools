@@ -18,10 +18,12 @@ from hwtools.analysis import measure
 from hwtools.decode.threshold import threshold
 from hwtools.drivers.rigol.ds1054z import DS1054Z
 from hwtools.drivers.rp2350 import SerialHarness
+from hwtools.model.acquire import AcquireConfig
 from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, Coupling, Slope, SweepMode
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
+from tests.hardware._acquire import acquire_single
 
 CH2 = ChannelId.CH2
 
@@ -34,19 +36,23 @@ def test_square_source_matches_command(
     harness.start_square(freq_hz, duty_pct=duty_pct)
     time.sleep(0.3)
     try:
+        for ch in (ChannelId.CH1, ChannelId.CH3, ChannelId.CH4):
+            live_scope.configure_channel(
+                ChannelConfig(channel=ch, scale_v_per_div=1.0, enabled=False)
+            )
         live_scope.configure_channel(
             ChannelConfig(channel=CH2, coupling=Coupling.DC, scale_v_per_div=1.0, probe_ratio=10.0)
         )
+        live_scope.configure_acquire(AcquireConfig(memory_depth=12_000))  # legal for 1 channel
         live_scope.configure_timebase(TimebaseConfig(scale_s_per_div=(4.0 / freq_hz) / 12.0))
         live_scope.configure_trigger(
             TriggerConfig(
                 trigger=EdgeTrigger(source=CH2, level_v=1.5, slope=Slope.RISING),
-                sweep=SweepMode.AUTO,
+                sweep=SweepMode.SINGLE,
             )
         )
-        live_scope.run()
-        time.sleep(0.4)
-        wf = live_scope.capture([CH2]).waveforms[CH2]
+        # Single-shot: arm and let the next rising edge trigger (never free-run).
+        wf = acquire_single(live_scope, [CH2]).waveforms[CH2]  # deep RAW read
     finally:
         harness.stop()
 

@@ -16,9 +16,8 @@ from hwtools.model.capture import Capture
 from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId
 from hwtools.model.quality import CaptureQuality
+from hwtools.model.waveform import CLIP_FRACTION_THRESHOLD
 
-# A channel is "clipping" when it reaches within this fraction of a screen rail.
-_RAIL_MARGIN_FRAC = 0.01
 # Below this fraction of full screen the signal is too small to be useful.
 _LOW_FILL_FRAC = 0.1
 # Fewer samples per period than this and the timebase is too fast for the signal.
@@ -32,6 +31,7 @@ def judge_capture(
 ) -> CaptureQuality:
     """Assess a capture against the configuration it was taken with."""
     clipping: dict[ChannelId, bool] = {}
+    clipped_fraction: dict[ChannelId, float] = {}
     fill_fraction: dict[ChannelId, float] = {}
     notes: list[str] = []
     bandwidth_ok = True
@@ -44,21 +44,24 @@ def judge_capture(
         full_scale = config.scale_v_per_div * capabilities.vertical_divisions
 
         if wf.saturation is not None:
-            # Exact: a sample at the digitiser's rail means real clipping.
-            clipped = wf.is_clipped
+            # Exact: the digitiser's true saturation rails from the preamble.
+            frac = wf.clipped_fraction
         else:
             # Fallback: model the rails from the configured screen window.
             halfspan = full_scale / 2.0
-            rail_high = -config.offset_v + halfspan
-            rail_low = -config.offset_v - halfspan
-            margin = _RAIL_MARGIN_FRAC * full_scale
-            clipped = wf.vmax >= rail_high - margin or wf.vmin <= rail_low + margin
+            frac = wf.fraction_beyond_rails(
+                -config.offset_v - halfspan, -config.offset_v + halfspan
+            )
+        # Clipping is a percentile of points, not a single excursion: a few
+        # rail-grazing samples (transient overshoot) stay below the threshold.
+        clipped = frac >= CLIP_FRACTION_THRESHOLD
         clipping[channel] = clipped
+        clipped_fraction[channel] = frac
         fill = wf.vpp / full_scale if full_scale > 0 else 0.0
         fill_fraction[channel] = fill
 
         if clipped:
-            notes.append(f"{channel.name} clipping at the rails")
+            notes.append(f"{channel.name} clipping at the rails ({frac:.1%} of samples)")
         elif fill < _LOW_FILL_FRAC:
             notes.append(f"{channel.name} fills only {fill:.0%} of the screen")
 
@@ -73,6 +76,7 @@ def judge_capture(
     return CaptureQuality(
         triggered=capture.triggered,
         clipping=clipping,
+        clipped_fraction=clipped_fraction,
         fill_fraction=fill_fraction,
         bandwidth_ok=bandwidth_ok,
         notes=notes,

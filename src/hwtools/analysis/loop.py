@@ -20,13 +20,47 @@ from hwtools.interfaces.oscilloscope import Oscilloscope
 from hwtools.model.acquire import AcquireConfig
 from hwtools.model.capture import Capture
 from hwtools.model.channel import ChannelConfig
-from hwtools.model.ids import ChannelId, SweepMode, TriggerStatus
+from hwtools.model.ids import ChannelId, TriggerStatus
 from hwtools.model.quality import Adjustment, CaptureQuality
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import TriggerConfig
 
 # Trigger states that mean a single acquisition has completed and a frame is ready.
 _CAPTURED_STATES = (TriggerStatus.STOP, TriggerStatus.TRIGGERED)
+
+# Default time to wait for a real trigger before forcing a frame.
+_DEFAULT_ACQUIRE_WAIT_S = 0.5
+
+
+def _acquire(
+    scope: Oscilloscope,
+    targets: list[ChannelId],
+    *,
+    wait_s: float,
+    poll_interval_s: float = 0.02,
+) -> Capture:
+    """Arm one acquisition and return a single frame — never free-running (AUTO).
+
+    Arms SINGLE, waits up to ``wait_s`` for a real trigger, and if none comes
+    forces a frame (:TFORce) so the tool always has data to reason over. Pass
+    ``wait_s=0`` for a blind measurement (force immediately — the trigger level
+    isn't known yet); pass a positive wait when the configured trigger should fire.
+
+    NOTE: on real hardware that changes vertical scale between iterations this needs
+    the two-phase arm-then-trigger wait proven in ``tests/hardware/_acquire.py``
+    (otherwise a just-armed scope still reports the previous STOP and a stale frame
+    is read, rescaled by the new scale). The simulated scope resolves ``single()``
+    synchronously with no stale frame, so the unit/loop tests don't exercise it;
+    wire the two-phase wait here when validating autoset/loop on the bench.
+    """
+    scope.single()
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        if scope.trigger_status() in _CAPTURED_STATES:
+            return scope.capture(targets)
+        time.sleep(poll_interval_s)
+    scope.force_trigger()
+    return scope.capture(targets)
 
 
 @dataclass(frozen=True)
@@ -105,6 +139,7 @@ def autoset(
     acquire: AcquireConfig | None = None,
     wide_scale_v_per_div: float = 5.0,
     max_widen: int = 3,
+    poll_timeout_s: float = _DEFAULT_ACQUIRE_WAIT_S,
 ) -> AutosetResult:
     """Configure the scope in one recommendation stage.
 
@@ -118,8 +153,7 @@ def autoset(
     targets = list(channels)
     scope.configure_timebase(timebase)
     scope.configure_acquire(acquire or AcquireConfig())
-    # Measure with the trigger free-running so we always get the signal.
-    scope.configure_trigger(trigger.model_copy(update={"sweep": SweepMode.AUTO}))
+    scope.configure_trigger(trigger)
 
     wide_scale = wide_scale_v_per_div
     measure_channels = {
@@ -130,8 +164,9 @@ def autoset(
     while True:
         for cfg in measure_channels.values():
             scope.configure_channel(cfg)
-        scope.run()
-        measurement = scope.capture(targets)
+        # Blind measurement: the trigger level isn't known yet, so force a frame
+        # (never wait on a trigger that may not fire, never free-run on AUTO).
+        measurement = _acquire(scope, targets, wait_s=0.0)
         if widen_steps >= max_widen or not any(
             measurement.waveforms[ch].is_clipped for ch in targets
         ):
@@ -155,8 +190,7 @@ def autoset(
         scope.configure_channel(cfg)
     scope.configure_timebase(setup.timebase)
     scope.configure_trigger(setup.trigger)
-    scope.run()
-    final = scope.capture(targets)
+    final = _acquire(scope, targets, wait_s=poll_timeout_s)
     quality = judge_capture(final, setup.channels, scope.capabilities)
     return AutosetResult(final, quality, setup, widen_steps, quality.usable)
 
@@ -169,6 +203,7 @@ def capture_until_usable(
     trigger: TriggerConfig,
     acquire: AcquireConfig | None = None,
     max_iterations: int = 8,
+    poll_timeout_s: float = _DEFAULT_ACQUIRE_WAIT_S,
 ) -> LoopResult:
     """Converge on a usable capture, adjusting the setup as needed."""
     current_channels = dict(channels)
@@ -184,8 +219,7 @@ def capture_until_usable(
     adjustments: list[Adjustment] = []
 
     for iteration in range(max_iterations):
-        scope.run()
-        capture = scope.capture(targets)
+        capture = _acquire(scope, targets, wait_s=poll_timeout_s)
         quality = judge_capture(capture, current_channels, scope.capabilities)
         adjustment = suggest_adjustment(
             quality,
@@ -210,7 +244,6 @@ def capture_until_usable(
             current_trigger = adjustment.trigger
             scope.configure_trigger(current_trigger)
 
-    scope.run()
-    capture = scope.capture(targets)
+    capture = _acquire(scope, targets, wait_s=poll_timeout_s)
     quality = judge_capture(capture, current_channels, scope.capabilities)
     return LoopResult(capture, quality, max_iterations, quality.usable, adjustments)

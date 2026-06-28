@@ -22,7 +22,14 @@ class CaptureQuality(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     triggered: bool
-    clipping: dict[ChannelId, bool] = Field(default_factory=dict)
+    clipping: dict[ChannelId, bool] = Field(
+        default_factory=dict, description="Per channel: clipped (a meaningful fraction at a rail)."
+    )
+    clipped_fraction: dict[ChannelId, float] = Field(
+        default_factory=dict,
+        description="Per channel: fraction of samples at the rails — clipping is a "
+        "percentile, not a single point, so a small value is transient overshoot.",
+    )
     fill_fraction: dict[ChannelId, float] = Field(
         default_factory=dict, description="Vertical span used, 0..~1, per channel."
     )

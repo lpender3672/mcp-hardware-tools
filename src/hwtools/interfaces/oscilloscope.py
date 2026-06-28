@@ -95,8 +95,14 @@ class Oscilloscope(ABC):
     # -- readout --------------------------------------------------------------
 
     @abstractmethod
-    def capture(self, channels: Sequence[ChannelId]) -> Capture:
-        """Download the last acquisition for the given channels."""
+    def capture(self, channels: Sequence[ChannelId], *, deep: bool = True) -> Capture:
+        """Download the last acquisition for the given channels.
+
+        ``deep`` (default) reads the full acquisition memory — the samples the
+        instrument actually captured, governed by the configured memory depth.
+        ``deep=False`` reads only the decimated on-screen trace: far fewer points
+        and far faster, but it aliases fast edges, so it's for a quick look only.
+        """
 
     # -- context manager ------------------------------------------------------
 

@@ -19,7 +19,10 @@ RIGOL_RAW_PORT = 5555
 class RawTcpTransport(Transport):
     """SCPI over a plain TCP socket."""
 
-    def __init__(self, host: str, port: int = RIGOL_RAW_PORT, *, timeout_s: float = 5.0) -> None:
+    # Deep-memory reads and :ACQuire:MDEPth changes (the scope reallocates its
+    # capture memory) can take several seconds; a short timeout fires mid-reply and
+    # desyncs the byte stream, which then jams the raw socket. Be generous.
+    def __init__(self, host: str, port: int = RIGOL_RAW_PORT, *, timeout_s: float = 15.0) -> None:
         self._host = host
         self._port = port
         self._timeout_s = timeout_s
