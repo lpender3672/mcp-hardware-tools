@@ -54,7 +54,7 @@ def test_single_shot_miss_returns_untriggered_and_stores_nothing() -> None:
     store = CaptureStore()
     frame = acquire(
         scope, store, channels=_channels(), timebase=_tb(), trigger=_trigger(9.0),
-        sweep=SweepMode.SINGLE,  # level out of range → never fires
+        sweep=SweepMode.SINGLE, trigger_timeout_s=0.3,  # level out of range → never fires
     )
     assert frame.result.triggered is False
     assert frame.capture is None

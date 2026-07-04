@@ -36,8 +36,9 @@ def test_capture_rejects_mismatched_channel_key() -> None:
     [
         (TriggerStatus.TRIGGERED, True),
         (TriggerStatus.AUTO, True),
+        (TriggerStatus.STOP, True),  # a completed SINGLE / deep-read frame latches to STOP
         (TriggerStatus.WAIT, False),
-        (TriggerStatus.STOP, False),
+        (TriggerStatus.RUN, False),
     ],
 )
 def test_capture_triggered_property(status: TriggerStatus, triggered: bool) -> None:

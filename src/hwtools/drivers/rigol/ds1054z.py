@@ -199,8 +199,11 @@ class DS1054Z(Oscilloscope):
     _RAW_CHUNK = 250_000
 
     def capture(self, channels: Sequence[ChannelId], *, deep: bool = True) -> Capture:
-        # RAW reads come from the frozen acquisition memory, so the scope must be
-        # stopped first; the trigger status is then latched at that frozen state.
+        # Read the trigger status *before* any stop(): a deep read must stop the
+        # scope to read frozen memory, and stopping would otherwise clobber the
+        # acquisition's real state (TD/AUTO) to STOP, losing whether it triggered.
+        status = self.trigger_status()
+        # RAW reads come from the frozen acquisition memory, so stop first.
         if deep:
             self.stop()
         sample_rate_hz = float(self._t.query(":ACQuire:SRATe?"))
@@ -208,7 +211,7 @@ class DS1054Z(Oscilloscope):
         waveforms = {ch: reader(ch) for ch in channels}
         return Capture(
             waveforms=waveforms,
-            trigger_status=self.trigger_status(),
+            trigger_status=status,
             sample_rate_hz=sample_rate_hz,
         )
 
@@ -257,6 +260,11 @@ class DS1054Z(Oscilloscope):
         w(":WAVeform:MODE NORMal")
         w(":WAVeform:FORMat BYTE")
         pre = _Preamble.parse(self._t.query(":WAVeform:PREamble?"))
+        # :WAVeform:DATA? honours the *last* STARt/STOP window, which a prior RAW
+        # read leaves pointing deep into acquisition memory — a NORMal read that
+        # doesn't reset it comes back with a single byte. Pin the screen range.
+        w(":WAVeform:STARt 1")
+        w(f":WAVeform:STOP {pre.points}")
         raw = self._t.query_block(":WAVeform:DATA?")
         return self._scale(channel, raw, pre)
 

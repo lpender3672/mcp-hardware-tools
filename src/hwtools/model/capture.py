@@ -36,5 +36,11 @@ class Capture(BaseModel):
 
     @property
     def triggered(self) -> bool:
-        """Whether a frame was actually captured (vs still hunting)."""
-        return self.trigger_status in (TriggerStatus.TRIGGERED, TriggerStatus.AUTO)
+        """Whether a frame was actually captured (vs still hunting).
+
+        WAIT/RUN mean the scope is still hunting the trigger — no frame. Everything
+        else means a frame is present: TRIGGERED / AUTO (free-run), and STOP — a
+        completed SINGLE acquisition latches to STOP, and a deep read stops the
+        scope to read frozen memory, so STOP is the normal state of a captured frame.
+        """
+        return self.trigger_status not in (TriggerStatus.WAIT, TriggerStatus.RUN)

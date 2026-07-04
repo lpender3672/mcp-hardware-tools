@@ -75,6 +75,7 @@ def capture_single(
     trigger: TriggerConfig,
     acquire: AcquireConfig | None = None,
     store: CaptureStore | None = None,
+    trigger_timeout_s: float | None = None,
 ) -> SingleShotResult:
     """Capture one non-repeating event: arm SINGLE, wait, deep-read once.
 
@@ -91,6 +92,7 @@ def capture_single(
         trigger=trigger,
         acquire_cfg=acquire,
         sweep=SweepMode.SINGLE,
+        trigger_timeout_s=trigger_timeout_s,
     )
     return SingleShotResult(
         triggered=frame.result.triggered, capture=frame.capture, assessment=frame.result

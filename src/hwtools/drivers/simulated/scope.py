@@ -68,6 +68,7 @@ class SimulatedScope(Oscilloscope):
         self._acquire = AcquireConfig()
         self._connected = False
         self._status = TriggerStatus.STOP
+        self._single_pending = False
 
     # -- identity & connection ------------------------------------------------
 
@@ -119,9 +120,13 @@ class SimulatedScope(Oscilloscope):
         self._status = TriggerStatus.STOP
 
     def single(self) -> None:
-        # Arm a single acquisition: it completes (STOP) once the trigger would
-        # fire on the signal, otherwise it waits forever (WAIT).
-        self._status = TriggerStatus.STOP if self._would_trigger() else TriggerStatus.WAIT
+        # Model real hardware's STOP -> WAIT -> STOP transition: report *armed*
+        # (WAIT) first, then let the next status poll resolve the trigger. This
+        # exercises the two-phase acquire wait (arm, then trigger) identically on
+        # sim and metal — and keeps it fast, since the arm phase resolves on the
+        # first poll instead of spinning until timeout.
+        self._status = TriggerStatus.WAIT
+        self._single_pending = True
 
     def force_trigger(self) -> None:
         self._status = TriggerStatus.AUTO
@@ -136,7 +141,13 @@ class SimulatedScope(Oscilloscope):
         return low <= self._trigger.trigger.level_v <= high
 
     def trigger_status(self) -> TriggerStatus:
-        return self._status
+        status = self._status
+        if self._single_pending:
+            # The armed acquisition resolves on this poll: it completes (STOP) if
+            # the trigger would fire, else it keeps hunting (WAIT).
+            self._single_pending = False
+            self._status = TriggerStatus.STOP if self._would_trigger() else TriggerStatus.WAIT
+        return status
 
     # -- readout --------------------------------------------------------------
 

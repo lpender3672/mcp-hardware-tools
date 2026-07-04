@@ -39,8 +39,14 @@ _CAPTURED_STATES = (TriggerStatus.STOP, TriggerStatus.TRIGGERED)
 # The scope has accepted the arm (left any previous STOP) and is acquiring.
 _ARMED_STATES = (TriggerStatus.WAIT, TriggerStatus.RUN, TriggerStatus.AUTO)
 
-_TIMEOUT_WINDOWS = 2.0  # wait up to this many windows for a one-shot trigger
-_TRIGGER_LATENCY_S = 0.05  # fixed margin on top of the window (command/trigger latency)
+# One-shot timing. Two separate concerns, previously (wrongly) conflated:
+#   * arming — leaving the previous STOP — takes a few SCPI round-trips, bounded.
+#   * the trigger *occurring* is NOT bounded by the timebase (a rare event may take
+#     a while); only the frame *fill* scales with the window. So the trigger budget
+#     is a generous fixed wall-clock plus a window allowance for slow timebases.
+_ARM_TIMEOUT_S = 1.0  # wait up to this for the scope to arm (leave the old STOP)
+_TRIGGER_TIMEOUT_S = 2.0  # generous fixed budget for a trigger to actually occur
+_FILL_WINDOWS = 2.0  # plus this many windows, so slow timebases have time to fill
 _SETTLE_LATENCY_S = 0.02  # free-run: command/settle latency for a fresh frame
 _POLL_INTERVAL_S = 0.02
 
@@ -86,12 +92,15 @@ def acquire(
     deep: bool | None = None,
     keep: bool | None = None,
     label: str | None = None,
+    trigger_timeout_s: float | None = None,
 ) -> AcquiredFrame:
     """Acquire one frame under ``sweep``, store it, and return the judged result.
 
     ``deep``/``keep`` default by mode: a triggered one-shot deep-reads and is kept;
     a free-run measurement reads the cheap screen frame and is ephemeral. Pass them
     explicitly to override (e.g. an ``AUTO`` deep read once the setup is good).
+    ``trigger_timeout_s`` overrides how long a one-shot waits for its trigger (the
+    default scales a generous fixed budget with the timebase).
     """
     configured = dict(channels)
     for config in configured.values():
@@ -105,7 +114,9 @@ def acquire(
     read_deep = (deep if deep is not None else one_shot)
 
     if one_shot:
-        capture = _acquire_triggered(scope, targets, timebase, deep=read_deep)
+        capture = _acquire_triggered(
+            scope, targets, timebase, deep=read_deep, trigger_timeout_s=trigger_timeout_s
+        )
         if capture is None:
             # Honest miss: no frame stored, no fabricated data.
             result = AcquireResult(triggered=False, timebase=timebase, notes=["not triggered"])
@@ -127,7 +138,12 @@ def acquire(
 
 
 def _acquire_triggered(
-    scope: Oscilloscope, targets: list[ChannelId], timebase: TimebaseConfig, *, deep: bool
+    scope: Oscilloscope,
+    targets: list[ChannelId],
+    timebase: TimebaseConfig,
+    *,
+    deep: bool,
+    trigger_timeout_s: float | None = None,
 ) -> Capture | None:
     """Arm one acquisition and read the triggered frame, or ``None`` on timeout.
 
@@ -136,9 +152,10 @@ def _acquire_triggered(
     return a stale frame rescaled by the new increment. Never forces a trigger.
     """
     scope.single()
-    _wait_until(scope, _ARMED_STATES, _TRIGGER_LATENCY_S)
-    timeout_s = _TIMEOUT_WINDOWS * _window_s(scope, timebase) + _TRIGGER_LATENCY_S
-    if not _wait_until(scope, _CAPTURED_STATES, timeout_s):
+    _wait_until(scope, _ARMED_STATES, _ARM_TIMEOUT_S)
+    if trigger_timeout_s is None:
+        trigger_timeout_s = _TRIGGER_TIMEOUT_S + _FILL_WINDOWS * _window_s(scope, timebase)
+    if not _wait_until(scope, _CAPTURED_STATES, trigger_timeout_s):
         return None
     return scope.capture(targets, deep=deep)
 

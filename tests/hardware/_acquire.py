@@ -18,8 +18,11 @@ from hwtools.model.timebase import TimebaseConfig
 
 _CAPTURED = (TriggerStatus.STOP, TriggerStatus.TRIGGERED)
 _ARMED = (TriggerStatus.WAIT, TriggerStatus.RUN, TriggerStatus.AUTO)
-_TIMEOUT_WINDOWS = 2.0
-_TRIGGER_LATENCY_S = 0.05
+# See hwtools.session.acquire: the trigger *occurring* isn't bounded by the
+# timebase, so the budget is a generous fixed wall-clock plus a window allowance.
+_ARM_TIMEOUT_S = 1.0
+_TRIGGER_TIMEOUT_S = 2.0
+_FILL_WINDOWS = 2.0
 _SETTLE_LATENCY_S = 0.02
 _POLL_S = 0.02
 
@@ -46,10 +49,10 @@ def acquire_one_shot(
     frame. Raises :class:`TimeoutError` if the trigger never fires; never forces.
     """
     scope.single()
-    _wait_until(scope, _ARMED, _TRIGGER_LATENCY_S)
-    timeout_s = _TIMEOUT_WINDOWS * _window_s(scope, timebase) + _TRIGGER_LATENCY_S
+    _wait_until(scope, _ARMED, _ARM_TIMEOUT_S)
+    timeout_s = _TRIGGER_TIMEOUT_S + _FILL_WINDOWS * _window_s(scope, timebase)
     if not _wait_until(scope, _CAPTURED, timeout_s):
-        raise TimeoutError("single acquisition did not trigger within the window budget")
+        raise TimeoutError("single acquisition did not trigger within the budget")
     return scope.capture(channels)
 
 

@@ -42,6 +42,7 @@ def test_single_shot_times_out_when_trigger_out_of_range() -> None:
         channels={CH1: ChannelConfig(channel=CH1, scale_v_per_div=0.3)},
         timebase=TimebaseConfig(scale_s_per_div=200e-6),
         trigger=_trigger(level=9.0),  # never fires
+        trigger_timeout_s=0.3,  # don't wait the full generous budget for a known miss
     )
     assert result.triggered is False
     assert result.capture is None

@@ -70,14 +70,23 @@ def suggest_adjustment(
                 reasons.append(f"{channel.name}: low fill, scale->{new_scale:g} V/div")
 
     new_trigger: TriggerConfig | None = None
-    if not result.triggered and trigger is not None:
+    if trigger is not None:
         source_wf = capture.waveforms.get(trigger.source)
         if source_wf is not None:
-            level = (source_wf.vmax + source_wf.vmin) / 2.0
-            new_trigger = trigger.model_copy(
-                update={"trigger": trigger.trigger.model_copy(update={"level_v": level})}
-            )
-            reasons.append(f"trigger level->{level:g} V")
+            current = trigger.trigger.level_v
+            # Fix the trigger level when the frame didn't trigger OR the level sits
+            # outside the signal's range (so it never would). Under AUTO free-run the
+            # frame always reports triggered, so an out-of-range level is only caught
+            # by the range check — without it the loop leaves the trigger unusable.
+            out_of_range = not (source_wf.vmin < current < source_wf.vmax)
+            if not result.triggered or out_of_range:
+                level = (source_wf.vmax + source_wf.vmin) / 2.0
+                # Only adjust if it meaningfully moves the level (else the loop churns).
+                if abs(level - current) > 0.05 * max(source_wf.vpp, 1e-6):
+                    new_trigger = trigger.model_copy(
+                        update={"trigger": trigger.trigger.model_copy(update={"level_v": level})}
+                    )
+                    reasons.append(f"trigger level->{level:g} V")
 
     new_timebase: TimebaseConfig | None = None
     if not result.bandwidth_ok:
