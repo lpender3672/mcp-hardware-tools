@@ -25,7 +25,7 @@ from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, Coupling, Slope, SweepMode
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
-from hwtools.tools.session import ScopeSession
+from hwtools.session import ScopeSession
 
 CH1, CH2, CH3 = ChannelId.CH1, ChannelId.CH2, ChannelId.CH3
 

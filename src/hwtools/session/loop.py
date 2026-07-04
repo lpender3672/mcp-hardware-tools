@@ -25,10 +25,10 @@ from hwtools.analysis.adjust import suggest_adjustment
 from hwtools.analysis.recommend import Setup, recommend_setup
 from hwtools.interfaces.oscilloscope import Oscilloscope
 from hwtools.model.acquire import AcquireConfig
+from hwtools.model.adjustment import Adjustment
 from hwtools.model.capture import Capture
 from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, SweepMode
-from hwtools.model.quality import Adjustment
 from hwtools.model.reading import AcquireResult
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import TriggerConfig

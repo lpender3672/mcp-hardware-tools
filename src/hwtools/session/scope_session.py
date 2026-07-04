@@ -1,11 +1,11 @@
-"""The agent-facing tool surface — one stateful facade over scope + store + analysis.
+"""The session facade — one stateful object composing scope + store + analysis.
 
 Every operation the agent performs goes through a :class:`ScopeSession`: it holds
-the one piece of state that must persist across tool calls (the
+the state that must persist across calls (the
 :class:`~hwtools.session.store.CaptureStore`) and the live scope, and composes the
-pure analysis lenses over stored frames *by handle*. The MCP server
-(:mod:`hwtools.tools.server`) is a thin binding over this class; all the real
-behaviour — and its tests — live here.
+pure analysis lenses over stored frames *by handle*. This is the top of the session
+layer; :mod:`hwtools.tools.server` is only the MCP transport that exposes it — all
+the real behaviour, and its tests, live here.
 
 The design line from ``docs/signal-infrastructure-plan.md`` holds: acquisition
 returns the lean decision view (:class:`AcquireResult`); everything else runs over

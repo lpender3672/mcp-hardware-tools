@@ -1,10 +1,11 @@
-"""Layer 6 — the MCP tool surface.
+"""Layer 6 — the MCP transport.
 
-Thin bindings over :class:`~hwtools.tools.session.ScopeSession`, which composes the
-session store and pure analysis into the operations the agent calls. The behaviour
-lives in the session; :mod:`hwtools.tools.server` is the MCP transport.
+Exposes the :class:`~hwtools.session.scope_session.ScopeSession` (Layer 5) over
+MCP. This package holds no behaviour of its own: :func:`~hwtools.tools.server.build_server`
+binds a session's operations onto agent-callable tools, and ``main`` serves them
+over stdio.
 """
 
-from hwtools.tools.session import ScopeSession
+from hwtools.tools.server import build_server, main
 
-__all__ = ["ScopeSession"]
+__all__ = ["build_server", "main"]

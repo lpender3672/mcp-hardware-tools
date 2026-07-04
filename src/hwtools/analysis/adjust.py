@@ -2,7 +2,7 @@
 
 The second half of the self-correcting brain: given an
 :class:`~hwtools.model.reading.AcquireResult` and the capture/config it came
-from, suggest an :class:`~hwtools.model.quality.Adjustment` the loop applies
+from, suggest an :class:`~hwtools.model.adjustment.Adjustment` the loop applies
 before re-capturing. Pure — no instrument access.
 
 Heuristics:
@@ -16,11 +16,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from hwtools.model.adjustment import Adjustment
 from hwtools.model.capability import ScopeCapabilities
 from hwtools.model.capture import Capture
 from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId
-from hwtools.model.quality import Adjustment
 from hwtools.model.reading import AcquireResult
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import TriggerConfig

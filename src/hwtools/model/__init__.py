@@ -1,6 +1,7 @@
 """Layer 0 — the descriptive, typed value objects everything else speaks in."""
 
 from hwtools.model.acquire import AcquireConfig
+from hwtools.model.adjustment import Adjustment
 from hwtools.model.capability import ScopeCapabilities
 from hwtools.model.capture import Capture
 from hwtools.model.channel import ChannelConfig
@@ -14,7 +15,6 @@ from hwtools.model.ids import (
     TriggerCoupling,
     TriggerStatus,
 )
-from hwtools.model.quality import Adjustment
 from hwtools.model.reading import AcquireResult, ChannelReading
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import AnyTrigger, EdgeTrigger, TriggerConfig
