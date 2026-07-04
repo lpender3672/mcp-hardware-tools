@@ -12,8 +12,10 @@ from collections.abc import Iterator
 
 import pytest
 
+from hwtools.drivers.joyit import JDS6600, find_jds6600_port
 from hwtools.drivers.rigol.ds1054z import DS1054Z
 from hwtools.drivers.rp2350 import SerialHarness, find_pico_port
+from hwtools.model.siggen import SigGenChannel, SignalGeneratorConfig, WaveShape
 
 
 @pytest.fixture(scope="session")
@@ -36,6 +38,23 @@ def live_scope(scope_host: str) -> Iterator[DS1054Z]:
 
 
 @pytest.fixture
+def live_generator() -> Iterator[JDS6600]:
+    """The connected JDS6600 signal generator; skips if no device is found."""
+    port = os.environ.get("HWTOOLS_JDS6600_PORT") or find_jds6600_port()
+    if port is None:
+        pytest.skip("no JDS6600 found (set HWTOOLS_JDS6600_PORT)")
+    gen = JDS6600(port)
+    try:
+        gen.connect()
+    except OSError as exc:
+        pytest.skip(f"JDS6600 at {port} could not be opened: {exc}")
+    try:
+        yield gen
+    finally:
+        gen.disconnect()
+
+
+@pytest.fixture
 def harness() -> Iterator[SerialHarness]:
     """The connected RP2350 harness; skips if no device is found."""
     port = os.environ.get("HWTOOLS_PICO_PORT") or find_pico_port()
@@ -50,3 +69,19 @@ def harness() -> Iterator[SerialHarness]:
         yield device
     finally:
         device.close()
+
+
+@pytest.fixture
+def generator(live_generator: JDS6600) -> Iterator[JDS6600]:
+    """The live JDS6600, restored to a benign 1 kHz 2 Vpp sine on CH1 after each test."""
+    try:
+        yield live_generator
+    finally:
+        live_generator.configure_channel(
+            SignalGeneratorConfig(
+                channel=SigGenChannel.CH1,
+                waveform=WaveShape.SINE,
+                frequency_hz=1_000.0,
+                amplitude_vpp=2.0,
+            )
+        )
