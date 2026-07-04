@@ -110,6 +110,29 @@ def welch_psd(
     )
 
 
+def psd_slope_db_per_decade(
+    wf: Waveform,
+    *,
+    f_lo: float,
+    f_hi: float,
+    nperseg: int | None = None,
+    window: str = DEFAULT_WINDOW,
+) -> float:
+    """Least-squares slope of the log-log Welch PSD over ``[f_lo, f_hi]``, dB/decade.
+
+    The spectral-colour metric for noise sources: white ~0, pink ~-10, brown ~-20
+    dB/decade. Choose the band to exclude DC and the top of the spectrum (filter
+    roll-off / the Nyquist edge), where the estimate is unreliable.
+    """
+    spec = welch_psd(wf, nperseg=nperseg, window=window)
+    freqs, psd = spec.frequencies_hz, spec.values
+    mask = (freqs >= f_lo) & (freqs <= f_hi) & (psd > 0)
+    if int(np.count_nonzero(mask)) < 2:
+        raise ValueError(f"need >=2 positive PSD bins in [{f_lo}, {f_hi}] Hz; got fewer")
+    slope, _ = np.polyfit(np.log10(freqs[mask]), 10.0 * np.log10(psd[mask]), 1)
+    return float(slope)
+
+
 def spectral_flatness(wf: Waveform, *, window: str = DEFAULT_WINDOW) -> float:
     """Wiener entropy of the spectrum: ~0 for a pure tone, ~1 for white noise.
 
