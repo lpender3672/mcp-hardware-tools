@@ -31,6 +31,7 @@ CH1, CH2, CH3 = ChannelId.CH1, ChannelId.CH2, ChannelId.CH3
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_session_acquire_describe_triage_on_real_square(
     harness: SerialHarness, live_scope: DS1054Z
 ) -> None:
@@ -80,6 +81,7 @@ def test_session_acquire_describe_triage_on_real_square(
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_session_decode_spi_round_trips(harness: SerialHarness, live_scope: DS1054Z) -> None:
     harness.start_spi()
     time.sleep(0.3)

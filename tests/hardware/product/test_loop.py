@@ -30,6 +30,7 @@ CH2 = ChannelId.CH2
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_capture_until_usable_converges_normal_sweep(
     harness: SerialHarness, live_scope: DS1054Z
 ) -> None:

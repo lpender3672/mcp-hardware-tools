@@ -50,6 +50,7 @@ def _view_ch1(scope: DS1054Z, scale_v_per_div: float) -> None:
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_siggen_1ch
 def test_sine_frequency_and_amplitude_measured_on_scope(
     generator: JDS6600, live_scope: DS1054Z
 ) -> None:
@@ -70,6 +71,7 @@ def test_sine_frequency_and_amplitude_measured_on_scope(
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_siggen_1ch
 @pytest.mark.parametrize("frequency_hz", [1_000.0, 50_000.0])
 def test_frequency_tracks_the_request(
     generator: JDS6600, live_scope: DS1054Z, frequency_hz: float
@@ -93,6 +95,7 @@ def test_frequency_tracks_the_request(
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_siggen_1ch
 def test_dc_offset_measured_on_scope(generator: JDS6600, live_scope: DS1054Z) -> None:
     """A DC bias set on the generator shows up as the captured mean level."""
     generator.configure_channel(

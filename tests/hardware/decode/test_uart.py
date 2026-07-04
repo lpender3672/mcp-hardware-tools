@@ -37,6 +37,7 @@ BAUD = 9600
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_host_commanded_uart_round_trips_through_scope() -> None:
     port = os.environ.get("HWTOOLS_PICO_PORT") or find_pico_port()
     if port is None:

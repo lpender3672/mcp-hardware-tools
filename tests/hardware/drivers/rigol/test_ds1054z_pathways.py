@@ -68,6 +68,7 @@ def _edge(source: ChannelId, level: float, slope: Slope = Slope.RISING) -> Trigg
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_idn_and_capabilities(live_scope: DS1054Z) -> None:
     assert "RIGOL" in live_scope.idn()
     caps = live_scope.capabilities
@@ -75,6 +76,7 @@ def test_idn_and_capabilities(live_scope: DS1054Z) -> None:
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 @pytest.mark.parametrize("slope", [Slope.RISING, Slope.FALLING, Slope.EITHER])
 def test_trigger_slopes_all_arm_and_fire(
     square: SerialHarness, live_scope: DS1054Z, slope: Slope
@@ -87,6 +89,7 @@ def test_trigger_slopes_all_arm_and_fire(
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 @pytest.mark.parametrize(
     "coupling",
     [TriggerCoupling.DC, TriggerCoupling.AC, TriggerCoupling.LF_REJECT, TriggerCoupling.HF_REJECT],
@@ -106,6 +109,7 @@ def test_trigger_couplings_accepted(
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 @pytest.mark.parametrize("acq", [AcqType.NORMAL, AcqType.AVERAGE, AcqType.PEAK, AcqType.HIGH_RES])
 def test_acquisition_types_configure_and_capture(
     square: SerialHarness, live_scope: DS1054Z, acq: AcqType
@@ -118,6 +122,7 @@ def test_acquisition_types_configure_and_capture(
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_memory_depth_valid_then_illegal_raises(
     square: SerialHarness, live_scope: DS1054Z
 ) -> None:
@@ -130,6 +135,7 @@ def test_memory_depth_valid_then_illegal_raises(
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_multi_chunk_deep_read(square: SerialHarness, live_scope: DS1054Z) -> None:
     """A deep read past the 250k RAW chunk exercises the paging loop + length check."""
     _only_ch2(live_scope)
@@ -140,6 +146,7 @@ def test_multi_chunk_deep_read(square: SerialHarness, live_scope: DS1054Z) -> No
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_shallow_read_is_the_screen_trace(square: SerialHarness, live_scope: DS1054Z) -> None:
     _only_ch2(live_scope)
     live_scope.configure_acquire(AcquireConfig())
@@ -151,6 +158,7 @@ def test_shallow_read_is_the_screen_trace(square: SerialHarness, live_scope: DS1
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_shallow_read_after_multichunk_deep_read_returns_full_screen(
     square: SerialHarness, live_scope: DS1054Z
 ) -> None:
@@ -182,6 +190,7 @@ def test_shallow_read_after_multichunk_deep_read_returns_full_screen(
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_timebase_snapped_to_grid_matches_the_scope(
     square: SerialHarness, live_scope: DS1054Z
 ) -> None:
@@ -200,6 +209,7 @@ def test_timebase_snapped_to_grid_matches_the_scope(
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_non_grid_scale_and_offset_capture_cleanly(
     square: SerialHarness, live_scope: DS1054Z
 ) -> None:
@@ -219,6 +229,7 @@ def test_non_grid_scale_and_offset_capture_cleanly(
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_bandwidth_limit_and_invert_are_accepted(
     square: SerialHarness, live_scope: DS1054Z
 ) -> None:
@@ -242,6 +253,7 @@ def test_bandwidth_limit_and_invert_are_accepted(
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_autoscale_finds_the_signal(square: SerialHarness, live_scope: DS1054Z) -> None:
     _only_ch2(live_scope)
     live_scope.autoscale()
@@ -252,6 +264,7 @@ def test_autoscale_finds_the_signal(square: SerialHarness, live_scope: DS1054Z) 
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_force_trigger_command_is_accepted(square: SerialHarness, live_scope: DS1054Z) -> None:
     """Exercise :TFORce on metal.
 
@@ -273,6 +286,7 @@ def test_force_trigger_command_is_accepted(square: SerialHarness, live_scope: DS
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_trigger_status_reports_armed_then_captured(
     square: SerialHarness, live_scope: DS1054Z
 ) -> None:
@@ -292,6 +306,7 @@ def test_trigger_status_reports_armed_then_captured(
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_configured_values_are_saved_verbatim(square: SerialHarness, live_scope: DS1054Z) -> None:
     """The scope must store exactly the (snapped/clamped) values the driver sends —
     a write-then-read-back guard against the silent "Parameter limited!" divergence.
@@ -321,6 +336,7 @@ def test_configured_values_are_saved_verbatim(square: SerialHarness, live_scope:
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_connect_and_capture_over_visa(scope_host: str) -> None:
     """The alternate VXI-11 transport (over_visa / VisaTransport) works on metal:
     every other HIL test uses the raw-TCP socket, so this is the only on-scope

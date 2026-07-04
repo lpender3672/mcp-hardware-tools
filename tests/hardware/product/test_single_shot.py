@@ -30,6 +30,7 @@ CH2 = ChannelId.CH2
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_single_shot_captures_one_frame_and_stops(
     harness: SerialHarness, live_scope: DS1054Z
 ) -> None:

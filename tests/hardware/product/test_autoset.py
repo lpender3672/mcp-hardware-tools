@@ -32,6 +32,7 @@ SQUARE_HZ = 1_000
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_autoset_converges_on_real_scope(harness: SerialHarness, live_scope: DS1054Z) -> None:
     harness.start_square(SQUARE_HZ, duty_pct=50)
     time.sleep(0.3)

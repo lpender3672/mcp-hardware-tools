@@ -29,6 +29,7 @@ _CASES = [(0.1, True), (0.2, True), (1.0, False), (2.0, False)]
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_judge_clipping_matches_real_digitiser(harness: SerialHarness, live_scope: DS1054Z) -> None:
     harness.start_uart_stream(0xA5, baud=9600)
     time.sleep(0.4)

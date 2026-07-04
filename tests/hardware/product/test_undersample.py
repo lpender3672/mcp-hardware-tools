@@ -27,6 +27,7 @@ _START_TIMEBASE = 1e-3  # 1 ms/div -> ~2 samples/period at 50 kHz
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_loop_resolves_undersampling_on_real_scope(
     harness: SerialHarness, live_scope: DS1054Z
 ) -> None:

@@ -49,6 +49,7 @@ _SHAPES = [
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_siggen_1ch
 @pytest.mark.parametrize(("shape", "ideal_crest", "tol"), _SHAPES)
 def test_analytic_arb_replays_with_expected_shape(
     generator: JDS6600,

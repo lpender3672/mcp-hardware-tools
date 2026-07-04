@@ -3,6 +3,19 @@
 Bench addresses come from the environment (with bench defaults). Fixtures skip
 rather than error when a device is absent, so a partial bench still runs what it
 can. All tests using these are gated by the ``hardware`` marker.
+
+**Bench-rig markers.** Only one physical wiring is on the bench at a time, so a test
+that needs a *specific* rig also carries a ``cfg_*`` marker (registered in
+``pyproject.toml``) naming it — applied individually, per test, since sibling tests
+in one module can need different rigs. Run the subset for the rig you have wired::
+
+    uv run pytest -m cfg_siggen_1ch      # 1 siggen channel -> 1 scope channel
+    uv run pytest -m cfg_digital         # MCU/PIO digital lines -> scope CH1-4
+
+Most driver and contract tests carry no ``cfg_*`` marker: they only need the
+instrument plugged in (USB/LAN), not a particular output wiring. The exception is a
+driver test that needs a specific *stimulus* — the DS1054Z pathways need a signal on
+CH2, so they carry ``cfg_digital`` like the rest of the digital rig.
 """
 
 from __future__ import annotations

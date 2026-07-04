@@ -82,6 +82,7 @@ def _capture_noise(generator: JDS6600, scope: DS1054Z, color: NoiseColor) -> Wav
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_siggen_1ch
 @pytest.mark.parametrize("color", list(NoiseColor))
 def test_arb_noise_replays_with_the_intended_spectral_slope(
     generator: JDS6600, live_scope: DS1054Z, color: NoiseColor
@@ -95,6 +96,7 @@ def test_arb_noise_replays_with_the_intended_spectral_slope(
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_siggen_1ch
 def test_white_arb_noise_reads_as_broadband_noise(
     generator: JDS6600, live_scope: DS1054Z
 ) -> None:
@@ -106,6 +108,7 @@ def test_white_arb_noise_reads_as_broadband_noise(
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_siggen_1ch
 @pytest.mark.parametrize(("low_cycles", "high_cycles"), [(50, 100), (150, 250), (300, 400)])
 def test_band_limited_noise_lands_in_its_window_and_sweeps(
     generator: JDS6600, live_scope: DS1054Z, low_cycles: int, high_cycles: int

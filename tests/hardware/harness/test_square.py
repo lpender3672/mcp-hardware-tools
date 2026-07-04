@@ -29,6 +29,7 @@ CH2 = ChannelId.CH2
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 @pytest.mark.parametrize(("freq_hz", "duty_pct"), [(1_000, 50), (5_000, 25), (2_000, 75)])
 def test_square_source_matches_command(
     harness: SerialHarness, live_scope: DS1054Z, freq_hz: int, duty_pct: int

@@ -38,6 +38,7 @@ def _digital(wf: Waveform) -> object:
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_spi_decode_round_trips(harness: SerialHarness, live_scope: DS1054Z) -> None:
     harness.start_spi()
     time.sleep(0.3)

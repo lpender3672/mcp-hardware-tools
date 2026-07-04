@@ -28,6 +28,7 @@ HOST = os.environ.get("HWTOOLS_SCOPE_HOST", "192.168.1.214")
 
 
 @pytest.mark.hardware
+@pytest.mark.cfg_digital
 def test_first_light_ch1() -> None:
     scope = DS1054Z.over_tcp(HOST)
     with scope:

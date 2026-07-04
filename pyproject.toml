@@ -63,6 +63,13 @@ testpaths = ["tests"]
 addopts = "--strict-markers -ra"
 markers = [
     "hardware: requires a physical instrument on the bench (excluded from CI; run supervised)",
+    # Bench-rig configurations: the physical wiring a HIL test needs. Only one rig is
+    # wired at a time, so run the matching subset, e.g. `pytest -m cfg_siggen_1ch`.
+    # Tests are tagged automatically by directory (see tests/hardware/conftest.py).
+    "cfg_digital: RIG — up to 4 MCU/PIO digital lines -> scope CH1-4 (decode, scope pathways, harness, product)",
+    "cfg_siggen_1ch: RIG — 1 signal-gen channel -> 1 scope channel (siggen output validation; modulation later)",
+    "cfg_siggen_2ch: RIG — 2 signal-gen channels -> 2 scope channels (dual-channel: phase, cross-channel; future)",
+    "cfg_noisy_digital: RIG — 1 MCU digital + siggen aux-in summed -> 1 scope channel (noisy digital decode; future)",
 ]
 
 [tool.coverage.run]
