@@ -86,6 +86,49 @@ def power_spectral_density(wf: Waveform, *, window: str = DEFAULT_WINDOW) -> Spe
     )
 
 
+def welch_psd(
+    wf: Waveform, *, nperseg: int | None = None, window: str = DEFAULT_WINDOW
+) -> Spectrum:
+    """Welch-averaged power spectral density (V^2/Hz): lower-variance noise floor.
+
+    Splits the record into overlapping ``nperseg``-length segments and averages
+    their periodograms — trading frequency resolution for a smoother estimate, the
+    right basis for noise / system-ID work. ``nperseg`` defaults to a segment that
+    balances resolution and averaging; the single-segment periodogram is the
+    ``nperseg = N`` special case.
+    """
+    n = wf.n
+    seg = nperseg if nperseg is not None else max(8, min(n, 256))
+    seg = min(seg, n)
+    freqs, psd = sps.welch(
+        wf.samples, fs=wf.sample_rate_hz, window=window, nperseg=seg, scaling="density"
+    )
+    return Spectrum(
+        np.asarray(freqs, dtype=np.float64),
+        np.asarray(psd, dtype=np.float64),
+        SpectrumKind.PSD_V2_PER_HZ,
+    )
+
+
+def spectral_flatness(wf: Waveform, *, window: str = DEFAULT_WINDOW) -> float:
+    """Wiener entropy of the spectrum: ~0 for a pure tone, ~1 for white noise.
+
+    The ratio of the geometric to the arithmetic mean of the (non-DC) power
+    spectrum. A single dominant tone concentrates power in one bin (low flatness);
+    broadband noise spreads it evenly (high flatness). One cheap number that
+    separates "a signal" from "a noise source" — central to triage and system-ID.
+    """
+    if wf.n < 8:
+        return 0.0
+    psd = power_spectral_density(wf, window=window).values[1:]  # drop the DC bin
+    psd = psd[psd > 0]
+    if psd.size == 0:
+        return 0.0
+    geo_mean = float(np.exp(np.mean(np.log(psd))))
+    arith_mean = float(np.mean(psd))
+    return geo_mean / arith_mean if arith_mean > 0 else 0.0
+
+
 def peak_frequency(
     wf: Waveform,
     *,
