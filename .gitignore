@@ -17,3 +17,8 @@ dist/
 .coverage
 htmlcov/
 coverage.xml
+
+# Rust / firmware build output
+target/
+*.uf2
+*.bin

@@ -1,0 +1,194 @@
+# HIL validation plan — proving the self-correcting brain on real hardware
+
+> Status: planning. This addresses a **major gap**: the analysis layer (judge /
+> recommend / autoset / loop) — i.e. the product — is validated **only against the
+> simulated scope**, whose physics we authored. That is circular, and we already
+> know the sim diverges from reality (the ADC clips at ~±5 divisions, not the ±4
+> the model assumed). No committed `@pytest.mark.hardware` test exercises any
+> recommender. The architecture is sound but **unproven on metal**.
+
+## Acquisition modes: repetitive vs single-shot
+
+The convergence loops (`autoset`, `capture_until_usable`) assume a **repeating**
+signal — every iteration re-captures the same thing. That is the wrong model for a
+**single-shot / non-repeating** event (a glitch, a power-on transient, a one-time
+transaction): you get one acquisition, so the setup must be right *before* arming.
+`capture_single` (loop.py) is the single-shot path — set up, arm SINGLE, poll the
+trigger status, read one frame, judge it. Validated on the bench
+(`test_single_shot_hil.py`): the scope captures one frame and STOPs.
+
+Outstanding: a genuinely non-repeating ground-truth source (a one-shot Pico pulse
+fired *after* the scope is armed) to prove the "you only get one chance" aspect;
+the arm/wait/capture/stop mechanism itself is already validated.
+
+## Operating philosophy: expect failure
+
+We will write each HIL test to assert the *correct* behaviour, run it on the
+bench, and **expect many to fail initially**. A failing HIL test is not a setback
+— it is the closed feedback loop doing its job: pinpointing exactly where the
+sim-derived model diverges from the instrument. The workflow per state is:
+
+1. Write the HIL test asserting correct behaviour (red).
+2. Run on the bench; record the real result.
+3. If it diverges, **fix the model/heuristic to match reality**, log the
+   divergence, re-run (green).
+4. Commit the now-passing HIL test *and* the fix together.
+
+A HIL test that passes on the first attempt is **suspicious** and must be
+double-checked — it usually means the assertion is too loose.
+
+Track every real-vs-sim divergence in a running "Known divergences" section at
+the bottom of this doc as we find them.
+
+## Why a better ground-truth source is needed first
+
+The recommenders are fundamentally **analog**: vertical scale, offset, timebase,
+trigger level. To assert them on real hardware we need stimuli with *precisely
+known* amplitude, frequency, offset, and DC level. The current harness — the
+Pico streaming `0xA5` UART — gives only a noisy ~5.5 Vpp bursty square with ringy
+overshoot and a baud-derived edge rate. That is enough to *clip* and to exercise
+the digital decode slice, but it is **not** a clean, known analog signal, and it
+cannot reach several states at all (clean periodic frequency, DC/flat, fast
+undersampled signals, arbitrary amplitude/offset).
+
+Per the README, the **JDS6600 signal generator is the eventual ground-truth
+source** (true analog sine/DC at arbitrary V/offset). It is **not on the bench
+right now**, so as the interim source we extended the Pico firmware with
+**`EMIT SQUARE <hz> <duty%>`** — a hardware-PWM square on GP1 (CH2) at a known
+frequency and duty (validated by `tests/hardware/test_square_hil.py`). This is a
+clean periodic 0–3.3 V (logic-level) signal that reaches most recommender states:
+known frequency (timebase/R5), edges (trigger/R8), fast signals (undersampling),
+and clipping at small V/div. What it *cannot* give is an arbitrary analog
+amplitude or a true DC level — those still want the JDS6600, deferred until it is
+available. A `EMIT DC` mode (GPIO held high ≈ 3.3 V) is a cheap next addition for
+the flat/DC states.
+
+---
+
+## Target HIL coverage matrix
+
+Every reachable recommender state, the stimulus that reaches it, the assertion,
+and the **suspected divergence** (why we expect it to fail first).
+
+### `judge_capture` — [judge.py](../src/hwtools/analysis/judge.py)
+
+| State | Stimulus | Assertion | Suspected divergence |
+|---|---|---|---|
+| clipping via saturation rails | any signal, small V/div | `clipping=True`; large V/div → `False` | low (probe already confirmed); commit it |
+| low-fill note | small signal, large V/div | fill<0.1 noted | margin tuning under real noise |
+| undersample note (`bandwidth_ok=False`) | **fast** square at slow timebase | `bandwidth_ok=False` | frequency estimate on a real fast edge |
+| not-triggered note | NORMAL sweep, bad level | `triggered=False` | real `:TRIG:STAT?` semantics vs model |
+| config-rail fallback (no saturation) | n/a on real scope (always has rails) | sim-only test acceptable | — |
+
+### `recommend_setup` — [recommend.py](../src/hwtools/analysis/recommend.py)
+
+| State | Stimulus | Assertion | Suspected divergence |
+|---|---|---|---|
+| R2 fit scale (unclipped, vpp>0) | siggen sine, known Vpp | scale → ~60% fill; recovers true Vpp | real ADC rail extent; noise |
+| R2 offset centring | siggen sine with **DC offset** | trace centres; `offset_v=−mid` works | **offset SIGN convention on Rigol — highest risk** |
+| R5 timebase from freq | siggen sine, known Hz | ~N periods on screen | frequency estimate on real/noisy signal |
+| R8 trigger level → midline | siggen sine | level ≈ measured midline → triggers | midline estimate under noise |
+| R1 clipped channel → open wide | huge siggen amplitude | scale jumps wide, then sizes next pass | rail detection at the wide scale |
+| R3 flat/DC | `EMIT DC` or siggen DC | keep scale, centre on DC level | freq=None path; DC offset sign |
+| R6 flat → keep timebase | DC source | timebase unchanged | — |
+| R4/R7/R9 missing waveform/source | n/a on real (channels present) | sim-only acceptable | — |
+
+### `autoset` — [loop.py](../src/hwtools/analysis/loop.py)
+
+| State | Stimulus | Assertion | Suspected divergence |
+|---|---|---|---|
+| AS1 wide measure unclipped → 1 recommend → usable | siggen sine | `converged`, `widen_steps=0`, true Vpp recovered, not clipped | the headline test; offset sign, rails |
+| AS2 measure clipped → widen | very large signal | `widen_steps≥1`, then converges | `wide_scale=5 V/div` assumption vs real range |
+| AS3 widen maxed, still clipped | signal beyond probe range | terminates, `converged=False` honestly | edge case |
+
+### `suggest_adjustment` / `capture_until_usable` — [adjust.py](../src/hwtools/analysis/adjust.py), [loop.py](../src/hwtools/analysis/loop.py)
+
+| State | Stimulus | Assertion | Suspected divergence |
+|---|---|---|---|
+| A1 clipping → grow scale | small V/div on any signal | converges to unclipped | probe-confirmed; commit it |
+| A2 low-fill → zoom in | small signal, large V/div | zooms to good fill | offset sign; noise |
+| T1 not triggered → set level | NORMAL sweep, bad level | converges to triggered | **NORMAL-sweep capture of an untriggered frame** — can the driver even read the source midline? |
+| B1 undersampled → timebase ÷2 | fast square, slow timebase | converges to well-sampled | never exercised even in sim |
+| L1/L2/L3 converge / stuck / exhausted | constructed scenarios | correct `converged` flag | — |
+
+> Note: `suggest_adjustment` is the **legacy iterative** path. Decide during
+> execution whether to keep it (general fallback) or retire it in favour of the
+> single-stage `recommend_setup`/`autoset`. If retained, its HIL coverage above
+> still applies.
+
+---
+
+## Highest-risk assumptions (most likely to fail first)
+
+1. **Offset sign — VALIDATED (H2).** `recommend_setup` sets `offset_v = −midline`.
+   The bench confirms the DS1000Z convention is `screen_centre = −offset_v` (probed
+   via the saturation window), which matches the sim, so `offset_v = −mid` correctly
+   centres the screen window on the signal. autoset's centring error was +0.14 V on
+   a ~5.9 Vpp signal. Note: the returned waveform volts are *true input* (offset
+   only moves the screen window / what clips), which the sim also models correctly.
+   Still untested for a **DC-offset-dominated** signal (small amplitude, large
+   offset) — that needs the JDS6600 or an EMIT DC mode.
+2. **NORMAL-sweep untriggered capture — VALIDATED (H3), does not occur.** The fear
+   was that `:WAV:DATA?` returns stale/empty data when the trigger never fires,
+   breaking the trigger-level fix (T1/R8). On the bench the DS1000Z returns the
+   *live* acquisition even when untriggered, so `capture_until_usable` reads the
+   source midline and fixes the trigger fine (converged in 4 iters under NORMAL
+   sweep, A1+T1 both firing). `autoset` measures with AUTO sweep anyway, so it was
+   never at risk. No fix needed.
+3. **ADC rail extent / fill margins under noise.** Already bit us once (±5 vs ±4).
+   Real noise may trip the clipping margin or the low-fill threshold.
+4. **Frequency estimation on real signals.** Mean-crossing frequency on a ringy
+   or bursty real signal may be unstable, breaking R5 timebase recommendations.
+   A clean siggen sine/square is the antidote.
+5. **`wide_scale = 5 V/div`** measurement assumption — too wide for a mV siggen
+   signal (poor measurement resolution), too narrow for a large one.
+
+---
+
+## Execution sequence (milestones)
+
+- **H0 — HIL infrastructure.** A `tests/hardware/conftest.py` with bench addresses
+  (scope IP, siggen port, pico port) and a parametrised "known signal" fixture.
+  Commit the already-probe-validated **judge clipping** HIL test (low risk) to
+  establish the pattern.
+- **H1 — JDS6600 online.** `SignalGenerator` interface + `joyit/jds6600.py` driver
+  over USB CDC (protocol in `docs/JT-JDS6600-Communication-protocol.pdf`), plus a
+  supervised first-light (set 1 kHz 2 Vpp sine, capture, confirm). Add a
+  SignalGenerator contract suite mirroring the scope one.
+- **H2 — autoset headline HIL.** AS1 + R2 + R5 + R8 against a known siggen sine.
+  Explicitly validate the **offset sign**. Expect failures; fix the model.
+- **H3 — trigger + sweep.** T1 / R8 with NORMAL sweep; fix the untriggered-measure
+  strategy (force-AUTO-to-measure). Apply the fix to `capture_until_usable`.
+- **H4 — undersampling.** B1 + judge undersample note with a fast square; this is
+  dead in sim today, so add the sim test too.
+- **H5 — clipping & widen.** A1 / R1 / AS2 / AS3 with large amplitudes; reconcile
+  `wide_scale` and rail handling with reality.
+- **H6 — edges & loop outcomes.** R3/R6 (DC), L1/L2/L3, AS3 not-converged. Some
+  (R4/R7/R9 missing-channel) stay sim-only by nature.
+- **H7 — close dead sim branches & reconcile.** Ensure the SimulatedScope is
+  corrected to match every divergence found, so sim and bench finally agree.
+
+## Definition of done
+
+- Every reachable recommender state has a committed test.
+- Every **analog** state has a committed HIL test driven by a *precisely known*
+  stimulus (JDS6600 or, where sufficient, a defined Pico mode).
+- All discovered sim-vs-real divergences are logged below **and** fixed in the
+  SimulatedScope, so the sim is a faithful proxy for CI.
+- `uv run pytest -m hardware` is green on the bench; `-m "not hardware"` green in CI.
+
+---
+
+## Known divergences (sim vs. real) — living log
+
+| # | Symptom | Root cause | Fix | Commit |
+|---|---|---|---|---|
+| 1 | judge false-positive clipping at 1.0 V/div | sim modelled ADC at ±4 div; DS1000Z digitises ~±5 div | carry true saturation rails from the preamble; judge uses them. Sim reconciled to clip at ~±5.1 div (adc_overscan) so it is a faithful CI proxy | `e59a644`, H7 |
+| 2 | `measure.frequency` read 2× on a 75%-duty real square | mean-crossing: the DC mean sits near the high plateau, so overshoot ringing crosses it repeatedly | (interim) midpoint+hysteresis rising-edge spacing | H1 |
+| 3 | crossing estimator reported a spurious tone on a noisy DC line | any crossing method counts noise crossings as edges; fundamentally noise-sensitive | replaced with an **FFT peak-prominence** estimator — integrates over the record, returns None when no bin stands above the noise floor (subsumes #2) | H6 |
+| 4 | shallow (NORMal) read returned a single point → flat frames, loop "converged" on nothing | a prior multi-chunk RAW read leaves `:WAV:STARt` > 1200; per the manual NORMal STARt range is 1..1200, so a stale high STARt truncates `:WAV:DATA?` | pin `:WAV:STARt 1` in the NORMal read (do **not** set STOP — it is clamped to the screen and setting it chirps "Stop point changed!"). Driver-layer regression test on the bench | I-infra |
+| 5 | every deep one-shot reported `triggered=False` on real data | `capture()` read the trigger status *after* `stop()` (deep reads stop to read frozen memory), clobbering TD→STOP; and `Capture.triggered` excluded STOP | read status *before* stopping; `triggered` = "not WAIT/RUN" (a completed SINGLE latches STOP) | I-infra |
+| 6 | one-shot timed out on a 1 kHz square at fast timebase | trigger budget was `2 × window` (~55 ms), conflating arm time with trigger-arrival time (unbounded by the timebase) | 1 s arm wait + a generous fixed trigger budget (2 s) plus a window allowance for slow timebases | I-infra |
+| 7 | `:TFORce` does not drive a NORMAL/SINGLE acquisition to a captured state | on this DS1104Z force-trigger is unreliable in these modes | removed force from the acquisition path entirely (honest miss instead); force_trigger kept on the driver, command-emission unit-tested + socket-health HIL smoke | I-infra |
+| 8 | scope beeps "Parameter limited!" and silently uses a different setting than requested | the DS1000Z clamps out-of-grid values: vertical scale is 1-2-5 quantized (unless :VERNier), timebase is 1-2-5 (no fine), offset range shrinks to ±20 V at 10X below 5 V/div. recommend/autoset/adjust produced continuous values (1.25 V/div, 333 us, x2 growth to 0.4/0.8) | driver sends scope-valid values: :CHANnel:VERNier ON (continuous scale), snap timebase to nearest 1-2-5, clamp offset to the documented probe-scaled range. **Found from the manual, not the bench** — error-queue/readback probing jams the raw socket | I-infra |
+| … | _(to be filled as HIL tests fail and teach us)_ | | | |

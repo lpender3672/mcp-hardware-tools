@@ -1,0 +1,17 @@
+# Harness firmware workspace.
+#
+# Per-target binary crates live under targets/<chip>/ — each owns its HAL,
+# memory.x, boot block, and target triple. MCU-agnostic logic (stimulus config,
+# the PIO UART-TX program, divider math) lives in the `common` library crate.
+#
+# Build a target from its own directory so its .cargo/config.toml applies, e.g.:
+#   cd targets/rp2350 && cargo build --release
+[workspace]
+resolver = "2"
+members = ["common", "targets/rp2350", "targets/rp2040"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+debug = false
+codegen-units = 1

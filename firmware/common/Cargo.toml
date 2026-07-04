@@ -1,0 +1,10 @@
+[package]
+name = "hwtools-harness-common"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "MCU-agnostic harness logic: stimulus config and PIO programs."
+
+[dependencies]
+heapless = "0.9.3"
+pio = "0.3"

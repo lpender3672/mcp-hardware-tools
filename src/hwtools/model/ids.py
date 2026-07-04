@@ -50,3 +50,35 @@ class AcqType(StrEnum):
     AVERAGE = "AVERAGE"
     PEAK = "PEAK"
     HIGH_RES = "HIGH_RES"
+
+
+class TriggerCoupling(StrEnum):
+    """Coupling applied to the trigger path (distinct from channel coupling)."""
+
+    DC = "DC"
+    AC = "AC"
+    LF_REJECT = "LF_REJECT"
+    HF_REJECT = "HF_REJECT"
+
+
+class TimebaseMode(StrEnum):
+    """Horizontal acquisition mode."""
+
+    MAIN = "MAIN"
+    XY = "XY"
+    ROLL = "ROLL"
+
+
+class TriggerStatus(StrEnum):
+    """Instrument trigger-system state, as reported after an acquisition.
+
+    Mirrors the states a scope exposes (e.g. Rigol ``:TRIGger:STATus?`` returns
+    TD/WAIT/RUN/AUTO/STOP). ``TRIGGERED`` and ``AUTO`` mean a frame was captured;
+    ``WAIT``/``RUN`` mean it is still hunting for the trigger condition.
+    """
+
+    TRIGGERED = "TRIGGERED"
+    WAIT = "WAIT"
+    RUN = "RUN"
+    AUTO = "AUTO"
+    STOP = "STOP"
