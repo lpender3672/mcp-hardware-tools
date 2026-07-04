@@ -289,3 +289,56 @@ def test_trigger_status_reports_armed_then_captured(
             break
         time.sleep(0.02)
     assert captured
+
+
+@pytest.mark.hardware
+def test_configured_values_are_saved_verbatim(square: SerialHarness, live_scope: DS1054Z) -> None:
+    """The scope must store exactly the (snapped/clamped) values the driver sends —
+    a write-then-read-back guard against the silent "Parameter limited!" divergence.
+
+    Feeds off-grid / out-of-range inputs (1.25 V/div, 333 us, 9 V), then reads each
+    setting back once (spaced, scope stopped) and asserts the scope holds the
+    driver's *computed* value, not the raw input the scope would have clamped.
+    """
+    _only_ch2(live_scope)
+    live_scope.configure_channel(
+        ChannelConfig(channel=CH2, coupling=Coupling.DC, scale_v_per_div=1.25, probe_ratio=10.0)
+    )
+    live_scope.configure_timebase(TimebaseConfig(scale_s_per_div=3.33e-4))
+    live_scope.configure_acquire(AcquireConfig(memory_depth=12_000))
+    live_scope.configure_trigger(_edge(CH2, 9.0))  # 9 V -> clamped to 4.9 div at 1 V/div
+    live_scope.stop()
+    time.sleep(0.1)
+
+    def readback(query: str) -> float:
+        time.sleep(0.1)  # let the setting settle; one gentle query at a time
+        return float(live_scope._t.query(query))
+
+    assert readback(":CHANnel2:SCALe?") == pytest.approx(1.0, rel=0.01)  # snapped, not 1.25
+    assert readback(":CHANnel2:OFFSet?") == pytest.approx(0.0, abs=0.02)
+    assert readback(":TIMebase:MAIN:SCALe?") == pytest.approx(5e-4, rel=0.01)  # snapped, not 333us
+    assert readback(":TRIGger:EDGe:LEVel?") == pytest.approx(4.9, abs=0.1)  # clamped, not 9
+
+
+@pytest.mark.hardware
+def test_connect_and_capture_over_visa(scope_host: str) -> None:
+    """The alternate VXI-11 transport (over_visa / VisaTransport) works on metal:
+    every other HIL test uses the raw-TCP socket, so this is the only on-scope
+    coverage of the VISA path. Skips if the instrument is not reachable over VXI-11.
+    """
+    scope = DS1054Z.over_visa(f"TCPIP::{scope_host}::INSTR")
+    try:
+        scope.connect()
+    except Exception as exc:
+        pytest.skip(f"VXI-11 not reachable at {scope_host}: {exc}")
+    try:
+        assert "RIGOL" in scope.idn()
+        _only_ch2(scope)
+        scope.configure_acquire(AcquireConfig())
+        scope.run()
+        time.sleep(_TB.scale_s_per_div * 12 + 0.05)
+        scope.stop()
+        wf = scope.capture([CH2], deep=False).waveforms[CH2]
+        assert wf.n > 1  # a real frame came back over VISA
+    finally:
+        scope.disconnect()
