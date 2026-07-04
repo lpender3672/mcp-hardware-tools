@@ -19,13 +19,13 @@ import time
 import pytest
 
 from hwtools.analysis import measure
-from hwtools.analysis.loop import autoset
 from hwtools.drivers.rigol.ds1054z import DS1054Z
 from hwtools.drivers.rp2350 import SerialHarness
 from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, Coupling, Slope, SweepMode
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
+from hwtools.session.loop import autoset
 
 CH2 = ChannelId.CH2
 SQUARE_HZ = 1_000
@@ -60,7 +60,7 @@ def test_autoset_converges_on_real_scope(harness: SerialHarness, live_scope: DS1
     screen_centre = (wf.saturation[0] + wf.saturation[1]) / 2.0
     signal_mid = (wf.vmin + wf.vmax) / 2.0
 
-    fill = result.quality.fill_fraction[CH2]
+    fill = result.assessment.channels[CH2].fill_fraction
     trig_level = result.setup.trigger.trigger.level_v
     centre_err = screen_centre - signal_mid
     print(
@@ -72,12 +72,12 @@ def test_autoset_converges_on_real_scope(harness: SerialHarness, live_scope: DS1
 
     # Converged in one recommendation, usable, not clipped.
     assert result.converged
-    assert result.quality.usable
+    assert result.assessment.usable
     assert result.widen_steps == 0
-    assert not result.quality.clipping[CH2]
+    assert not result.assessment.channels[CH2].clipping
     # Recovered the true ~5.9 Vpp signal from the clipped 0.1 V/div start (R2).
     assert wf.vpp > 5.0
-    assert 0.4 < result.quality.fill_fraction[CH2] < 0.75
+    assert 0.4 < result.assessment.channels[CH2].fill_fraction < 0.75
     # Timebase shows a few periods of the measured frequency (R5).
     assert freq is not None and abs(freq - SQUARE_HZ) / SQUARE_HZ < 0.1
     assert 2e-4 < result.setup.timebase.scale_s_per_div < 5e-4

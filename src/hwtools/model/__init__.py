@@ -14,7 +14,8 @@ from hwtools.model.ids import (
     TriggerCoupling,
     TriggerStatus,
 )
-from hwtools.model.quality import Adjustment, CaptureQuality
+from hwtools.model.quality import Adjustment
+from hwtools.model.reading import AcquireResult, ChannelReading
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import AnyTrigger, EdgeTrigger, TriggerConfig
 from hwtools.model.waveform import DigitalTrace, Waveform
@@ -22,12 +23,13 @@ from hwtools.model.waveform import DigitalTrace, Waveform
 __all__ = [
     "AcqType",
     "AcquireConfig",
+    "AcquireResult",
     "Adjustment",
     "AnyTrigger",
     "Capture",
-    "CaptureQuality",
     "ChannelConfig",
     "ChannelId",
+    "ChannelReading",
     "Coupling",
     "DigitalTrace",
     "EdgeTrigger",

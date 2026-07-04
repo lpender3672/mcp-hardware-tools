@@ -1,9 +1,9 @@
-"""Decision-ready judgement of a capture, and the adjustment it implies.
+"""The adjustment a judgement implies.
 
-These two types are the vocabulary of the self-correcting loop: ``judge`` (M5)
-maps a :class:`~hwtools.model.capture.Capture` to a :class:`CaptureQuality`, and
-``adjust`` maps that quality plus the current setup to an :class:`Adjustment` the
-loop applies before re-capturing.
+``adjust`` (:mod:`hwtools.analysis.adjust`) maps an
+:class:`~hwtools.model.reading.AcquireResult` plus the current setup to an
+:class:`Adjustment` the loop overlays before re-capturing. The judgement type
+itself lives in :mod:`hwtools.model.reading`.
 """
 
 from __future__ import annotations
@@ -14,32 +14,6 @@ from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import TriggerConfig
-
-
-class CaptureQuality(BaseModel):
-    """Whether a capture is usable, and if not, why not."""
-
-    model_config = ConfigDict(frozen=True)
-
-    triggered: bool
-    clipping: dict[ChannelId, bool] = Field(
-        default_factory=dict, description="Per channel: clipped (a meaningful fraction at a rail)."
-    )
-    clipped_fraction: dict[ChannelId, float] = Field(
-        default_factory=dict,
-        description="Per channel: fraction of samples at the rails — clipping is a "
-        "percentile, not a single point, so a small value is transient overshoot.",
-    )
-    fill_fraction: dict[ChannelId, float] = Field(
-        default_factory=dict, description="Vertical span used, 0..~1, per channel."
-    )
-    bandwidth_ok: bool = True
-    notes: list[str] = Field(default_factory=list)
-
-    @property
-    def usable(self) -> bool:
-        """A capture is usable when it triggered and no channel is clipped."""
-        return self.triggered and not any(self.clipping.values())
 
 
 class Adjustment(BaseModel):

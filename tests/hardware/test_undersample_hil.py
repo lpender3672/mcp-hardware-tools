@@ -14,13 +14,13 @@ import time
 import pytest
 
 from hwtools.analysis import measure
-from hwtools.analysis.loop import capture_until_usable
 from hwtools.drivers.rigol.ds1054z import DS1054Z
 from hwtools.drivers.rp2350 import SerialHarness
 from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, Coupling, Slope, SweepMode
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
+from hwtools.session.loop import capture_until_usable
 
 CH2 = ChannelId.CH2
 _START_TIMEBASE = 1e-3  # 1 ms/div -> ~2 samples/period at 50 kHz
@@ -58,6 +58,6 @@ def test_loop_resolves_undersampling_on_real_scope(
     )
 
     assert result.converged
-    assert result.quality.bandwidth_ok  # resolved
+    assert result.assessment.bandwidth_ok  # resolved
     assert wf.dt_s < _START_TIMEBASE / 100  # timebase was sped up (dt = scale/100)
     assert any("undersampled" in a.reason for a in result.adjustments)

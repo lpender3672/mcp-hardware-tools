@@ -22,7 +22,7 @@ from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, Coupling, SweepMode
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
-from tests.hardware._acquire import acquire_single
+from tests.hardware._acquire import acquire_repeating
 
 HOST = os.environ.get("HWTOOLS_SCOPE_HOST", "192.168.1.214")
 
@@ -46,15 +46,17 @@ def test_first_light_ch1() -> None:
             )
         )
         scope.configure_acquire(AcquireConfig(memory_depth=12_000))
-        scope.configure_timebase(TimebaseConfig(scale_s_per_div=1e-3))
+        tb = TimebaseConfig(scale_s_per_div=1e-3)
+        scope.configure_timebase(tb)
         scope.configure_trigger(
             TriggerConfig(
                 trigger=EdgeTrigger(source=ChannelId.CH1, level_v=1.0),
-                sweep=SweepMode.SINGLE,
+                sweep=SweepMode.AUTO,
             )
         )
-        # Single-shot: arm, forcing a frame if CH1 is idle — never free-run.
-        cap = acquire_single(scope, [ChannelId.CH1], timeout_s=0.3, force_if_idle=True)
+        # CH1 may be idle (nothing to trigger on), so free-run in AUTO and read a
+        # fresh screen frame — the scope's auto-trigger always yields one.
+        cap = acquire_repeating(scope, [ChannelId.CH1], tb)
 
     wf = cap.waveforms[ChannelId.CH1]
     print(

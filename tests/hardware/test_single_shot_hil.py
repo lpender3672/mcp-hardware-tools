@@ -18,13 +18,13 @@ import time
 
 import pytest
 
-from hwtools.analysis.loop import capture_single
 from hwtools.drivers.rigol.ds1054z import DS1054Z
 from hwtools.drivers.rp2350 import SerialHarness
 from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, Coupling, Slope, SweepMode, TriggerStatus
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
+from hwtools.session.loop import capture_single
 
 CH2 = ChannelId.CH2
 
@@ -48,7 +48,6 @@ def test_single_shot_captures_one_frame_and_stops(
                 trigger=EdgeTrigger(source=CH2, level_v=1.5, slope=Slope.RISING),
                 sweep=SweepMode.SINGLE,
             ),
-            poll_timeout_s=3.0,
         )
         # After a single acquisition the scope is stopped, not free-running.
         post_status = live_scope.trigger_status()

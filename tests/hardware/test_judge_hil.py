@@ -21,7 +21,7 @@ from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, Coupling, Slope, SweepMode
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
-from tests.hardware._acquire import acquire_single
+from tests.hardware._acquire import acquire_repeating
 
 # The harness ~3.3 V logic signal (with overshoot) is ~5.5 Vpp on the scope, so a
 # small V/div clips and a large V/div shows it whole.
@@ -36,11 +36,12 @@ def test_judge_clipping_matches_real_digitiser(harness: SerialHarness, live_scop
     for ch in (ChannelId.CH2, ChannelId.CH3, ChannelId.CH4):
         live_scope.configure_channel(ChannelConfig(channel=ch, scale_v_per_div=1.0, enabled=False))
     live_scope.configure_acquire(AcquireConfig(memory_depth=12_000))  # legal for 1 channel
-    live_scope.configure_timebase(TimebaseConfig(scale_s_per_div=2e-3))
+    tb = TimebaseConfig(scale_s_per_div=2e-3)
+    live_scope.configure_timebase(tb)
     live_scope.configure_trigger(
         TriggerConfig(
             trigger=EdgeTrigger(source=ChannelId.CH1, level_v=1.5, slope=Slope.RISING),
-            sweep=SweepMode.SINGLE,
+            sweep=SweepMode.AUTO,
         )
     )
 
@@ -53,20 +54,20 @@ def test_judge_clipping_matches_real_digitiser(harness: SerialHarness, live_scop
                 probe_ratio=10.0,
             )
             live_scope.configure_channel(config)
-            # At clipping scales the railed signal never reaches the 1.5 V trigger,
-            # so force a fresh frame at the current scale (force_if_idle) rather than
-            # re-reading a stale frame from the previous scale.
-            cap = acquire_single(live_scope, [ChannelId.CH1], timeout_s=0.5, force_if_idle=True)
+            # Repeating signal: at clipping scales the railed line never reaches the
+            # 1.5 V trigger, so AUTO sweep (the scope auto-triggers) gives a fresh
+            # frame at the current scale every time — no forcing, no stale frame.
+            cap = acquire_repeating(live_scope, [ChannelId.CH1], tb)
             wf = cap.waveforms[ChannelId.CH1]
-            quality = judge_capture(cap, {ChannelId.CH1: config}, live_scope.capabilities)
+            result = judge_capture(cap, {ChannelId.CH1: config}, live_scope.capabilities)
 
             assert wf.saturation is not None  # the real driver always reports rails
             low, high = wf.saturation
             print(
                 f"\n[judge-hil] {scale} V/div vpp={wf.vpp:.2f} "
                 f"sat=({low:.2f}, {high:.2f}) "
-                f"clip={quality.clipping[ChannelId.CH1]} (expect {expect_clip})"
+                f"clip={result.channels[ChannelId.CH1].clipping} (expect {expect_clip})"
             )
-            assert quality.clipping[ChannelId.CH1] is expect_clip
+            assert result.channels[ChannelId.CH1].clipping is expect_clip
     finally:
         harness.stop()

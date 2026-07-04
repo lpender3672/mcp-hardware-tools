@@ -26,7 +26,7 @@ from hwtools.model.ids import ChannelId, Coupling, Slope, SweepMode
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
 from hwtools.model.waveform import Waveform
-from tests.hardware._acquire import acquire_single
+from tests.hardware._acquire import acquire_one_shot
 
 SCL, SDA = ChannelId.CH1, ChannelId.CH2
 # Must match firmware/common/src/protocol.rs I2C_TEST_ADDR / I2C_TEST_DATA.
@@ -64,14 +64,16 @@ def test_i2c_decode_round_trips(harness: SerialHarness, live_scope: DS1054Z) -> 
         # phantom START/STOPs. 60000 is a legal 2-channel record length; capture()
         # defaults to deep=True so the full memory downloads over the raw socket.
         live_scope.configure_acquire(AcquireConfig(memory_depth=60_000))
-        live_scope.configure_timebase(TimebaseConfig(scale_s_per_div=1e-3))
+        tb = TimebaseConfig(scale_s_per_div=1e-3)
+        live_scope.configure_timebase(tb)
         live_scope.configure_trigger(
             TriggerConfig(
                 trigger=EdgeTrigger(source=SDA, level_v=1.5, slope=Slope.FALLING),
                 sweep=SweepMode.SINGLE,
             )
         )
-        cap = acquire_single(live_scope, [SCL, SDA])  # single-shot, deep RAW read
+        # One I2C transaction is a one-shot event (the stream repeats, triggers fast).
+        cap = acquire_one_shot(live_scope, [SCL, SDA], tb)
     finally:
         harness.stop()
 

@@ -18,13 +18,13 @@ import time
 
 import pytest
 
-from hwtools.analysis.loop import capture_until_usable
 from hwtools.drivers.rigol.ds1054z import DS1054Z
 from hwtools.drivers.rp2350 import SerialHarness
 from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, Coupling, Slope, SweepMode
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
+from hwtools.session.loop import capture_until_usable
 
 CH2 = ChannelId.CH2
 
@@ -58,9 +58,9 @@ def test_capture_until_usable_converges_normal_sweep(
     print(f"\n[loop-hil] converged={result.converged} iters={result.iterations} | {reasons}")
 
     assert result.converged
-    assert result.quality.usable
+    assert result.assessment.usable
     assert result.capture.triggered
-    assert not result.quality.clipping[CH2]
+    assert not result.assessment.channels[CH2].clipping
     assert wf.vpp > 5.0  # recovered the true signal from the clipped start
     # Both the clipping (A1) and trigger-level (T1) heuristics had to fire.
     assert any("clipping" in a.reason for a in result.adjustments)

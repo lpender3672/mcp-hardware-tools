@@ -23,7 +23,7 @@ from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, Coupling, Slope, SweepMode
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
-from tests.hardware._acquire import acquire_single
+from tests.hardware._acquire import acquire_one_shot
 
 CH2 = ChannelId.CH2
 
@@ -44,15 +44,16 @@ def test_square_source_matches_command(
             ChannelConfig(channel=CH2, coupling=Coupling.DC, scale_v_per_div=1.0, probe_ratio=10.0)
         )
         live_scope.configure_acquire(AcquireConfig(memory_depth=12_000))  # legal for 1 channel
-        live_scope.configure_timebase(TimebaseConfig(scale_s_per_div=(4.0 / freq_hz) / 12.0))
+        tb = TimebaseConfig(scale_s_per_div=(4.0 / freq_hz) / 12.0)
+        live_scope.configure_timebase(tb)
         live_scope.configure_trigger(
             TriggerConfig(
                 trigger=EdgeTrigger(source=CH2, level_v=1.5, slope=Slope.RISING),
                 sweep=SweepMode.SINGLE,
             )
         )
-        # Single-shot: arm and let the next rising edge trigger (never free-run).
-        wf = acquire_single(live_scope, [CH2]).waveforms[CH2]  # deep RAW read
+        # The square triggers reliably on its rising edge: one-shot deep capture.
+        wf = acquire_one_shot(live_scope, [CH2], tb).waveforms[CH2]
     finally:
         harness.stop()
 

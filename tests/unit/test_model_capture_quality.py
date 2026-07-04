@@ -6,11 +6,12 @@ import pytest
 from pydantic import ValidationError
 
 from hwtools.model import (
+    AcquireResult,
     Adjustment,
     Capture,
-    CaptureQuality,
     ChannelConfig,
     ChannelId,
+    ChannelReading,
     ScopeCapabilities,
     TriggerStatus,
     Waveform,
@@ -49,15 +50,33 @@ def test_capture_triggered_property(status: TriggerStatus, triggered: bool) -> N
     assert cap.channels == [ChannelId.CH1]
 
 
-def test_quality_usable_requires_trigger_and_no_clipping() -> None:
-    good = CaptureQuality(triggered=True, clipping={ChannelId.CH1: False})
+def _reading(clipping: bool) -> ChannelReading:
+    return ChannelReading(
+        config=ChannelConfig(channel=ChannelId.CH1, scale_v_per_div=1.0),
+        vpp=1.0,
+        midline=0.0,
+        mean=0.0,
+        clipping=clipping,
+    )
+
+
+def test_result_usable_requires_trigger_and_no_clipping() -> None:
+    good = AcquireResult(triggered=True, channels={ChannelId.CH1: _reading(False)})
     assert good.usable is True
 
-    untriggered = CaptureQuality(triggered=False, clipping={ChannelId.CH1: False})
+    untriggered = AcquireResult(triggered=False, channels={ChannelId.CH1: _reading(False)})
     assert untriggered.usable is False
 
-    clipped = CaptureQuality(triggered=True, clipping={ChannelId.CH1: True})
+    clipped = AcquireResult(triggered=True, channels={ChannelId.CH1: _reading(True)})
     assert clipped.usable is False
+
+    # No channels but triggered: nothing clips, so it is trivially usable.
+    assert AcquireResult(triggered=True).usable is True
+
+
+def test_result_stamps_capture_id() -> None:
+    stamped = AcquireResult(triggered=True).with_capture_id("cap-7")
+    assert stamped.capture_id == "cap-7"
 
 
 def test_adjustment_emptiness() -> None:

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from hwtools.analysis.loop import LoopResult, capture_until_usable
 from hwtools.drivers.simulated import SimulatedScope, Sine
 from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, Slope, SweepMode
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
+from hwtools.session.loop import LoopResult, capture_until_usable
 
 
 def _run(
@@ -30,9 +30,9 @@ def test_converges_from_clipped_and_untriggered() -> None:
     result = _run(scope, scale=0.1, level=9.0)
 
     assert result.converged
-    assert result.quality.usable
-    assert result.quality.triggered
-    assert not any(result.quality.clipping.values())
+    assert result.assessment.usable
+    assert result.assessment.triggered
+    assert not any(c.clipping for c in result.assessment.channels.values())
     assert result.iterations >= 1
     assert result.adjustments  # it had to adjust
 
@@ -62,4 +62,4 @@ def test_zooms_in_on_tiny_signal() -> None:
     assert result.converged
     final_scale = result.adjustments[-1].channels[ChannelId.CH1].scale_v_per_div
     assert final_scale < 2.0  # zoomed in
-    assert result.quality.fill_fraction[ChannelId.CH1] > 0.3
+    assert result.assessment.channels[ChannelId.CH1].fill_fraction > 0.3

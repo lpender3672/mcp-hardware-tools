@@ -1,9 +1,11 @@
-"""Judge a capture: is it usable, and if not, why not.
+"""Judge a capture into the decision-ready view the agent (and loop) reason over.
 
 Maps a :class:`~hwtools.model.capture.Capture` (plus the vertical configuration
-and instrument grid it was taken with) to a decision-ready
-:class:`~hwtools.model.quality.CaptureQuality`. This is half the brain of the
-self-correcting loop; :mod:`hwtools.analysis.adjust` is the other half.
+and instrument grid it was taken with) to an
+:class:`~hwtools.model.reading.AcquireResult`: per channel, the measurements
+(vpp / midline / mean / frequency) folded together with the clip/fill judgement.
+This is half the brain of the self-correcting loop; :mod:`hwtools.analysis.adjust`
+is the other half. Pure — no instrument access.
 """
 
 from __future__ import annotations
@@ -15,7 +17,8 @@ from hwtools.model.capability import ScopeCapabilities
 from hwtools.model.capture import Capture
 from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId
-from hwtools.model.quality import CaptureQuality
+from hwtools.model.reading import AcquireResult, ChannelReading
+from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.waveform import CLIP_FRACTION_THRESHOLD
 
 # Below this fraction of full screen the signal is too small to be useful.
@@ -28,11 +31,10 @@ def judge_capture(
     capture: Capture,
     channels: Mapping[ChannelId, ChannelConfig],
     capabilities: ScopeCapabilities,
-) -> CaptureQuality:
+    timebase: TimebaseConfig | None = None,
+) -> AcquireResult:
     """Assess a capture against the configuration it was taken with."""
-    clipping: dict[ChannelId, bool] = {}
-    clipped_fraction: dict[ChannelId, float] = {}
-    fill_fraction: dict[ChannelId, float] = {}
+    readings: dict[ChannelId, ChannelReading] = {}
     notes: list[str] = []
     bandwidth_ok = True
 
@@ -55,17 +57,28 @@ def judge_capture(
         # Clipping is a percentile of points, not a single excursion: a few
         # rail-grazing samples (transient overshoot) stay below the threshold.
         clipped = frac >= CLIP_FRACTION_THRESHOLD
-        clipping[channel] = clipped
-        clipped_fraction[channel] = frac
         fill = wf.vpp / full_scale if full_scale > 0 else 0.0
-        fill_fraction[channel] = fill
+
+        # One frequency estimate per channel; derive samples/period from it.
+        freq = measure.frequency(wf)
+        spp = (1.0 / freq) / wf.dt_s if freq is not None and freq > 0 else None
+
+        readings[channel] = ChannelReading(
+            config=config,
+            vpp=wf.vpp,
+            midline=(wf.vmax + wf.vmin) / 2.0,
+            mean=measure.mean(wf),
+            frequency=freq,
+            clipping=clipped,
+            clipped_fraction=frac,
+            fill_fraction=fill,
+        )
 
         if clipped:
             notes.append(f"{channel.name} clipping at the rails ({frac:.1%} of samples)")
         elif fill < _LOW_FILL_FRAC:
             notes.append(f"{channel.name} fills only {fill:.0%} of the screen")
 
-        spp = measure.samples_per_period(wf)
         if spp is not None and spp < _MIN_SAMPLES_PER_PERIOD:
             bandwidth_ok = False
             notes.append(f"{channel.name} undersampled ({spp:.1f} samples/period)")
@@ -73,11 +86,10 @@ def judge_capture(
     if not capture.triggered:
         notes.append("not triggered")
 
-    return CaptureQuality(
+    return AcquireResult(
         triggered=capture.triggered,
-        clipping=clipping,
-        clipped_fraction=clipped_fraction,
-        fill_fraction=fill_fraction,
+        channels=readings,
         bandwidth_ok=bandwidth_ok,
+        timebase=timebase,
         notes=notes,
     )

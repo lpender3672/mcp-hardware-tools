@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from hwtools.analysis.loop import autoset
 from hwtools.analysis.recommend import recommend_setup
 from hwtools.drivers.simulated import DEFAULT_CAPABILITIES, Dc, SimulatedScope, Sine
 from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, Slope, SweepMode
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
+from hwtools.session.loop import autoset
 
 CH1 = ChannelId.CH1
 
@@ -57,10 +57,10 @@ def test_autoset_from_clipped_reaches_usable_in_one_recommendation() -> None:
     )
 
     assert result.converged
-    assert result.quality.usable
+    assert result.assessment.usable
     assert result.widen_steps == 0  # 5 V/div was wide enough to measure
-    assert not result.quality.clipping[CH1]
-    assert 0.4 < result.quality.fill_fraction[CH1] < 0.8  # well filled, not clipped
+    assert not result.assessment.channels[CH1].clipping
+    assert 0.4 < result.assessment.channels[CH1].fill_fraction < 0.8  # well filled, not clipped
 
 
 def test_autoset_widens_for_a_giant_signal() -> None:

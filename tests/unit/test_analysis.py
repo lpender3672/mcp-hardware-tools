@@ -10,6 +10,7 @@ from hwtools.analysis.judge import judge_capture
 from hwtools.drivers.simulated import DEFAULT_CAPABILITIES, SimulatedScope, Sine
 from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, Slope, SweepMode
+from hwtools.model.reading import AcquireResult
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
 from hwtools.model.waveform import Waveform
@@ -44,7 +45,7 @@ def _scope() -> SimulatedScope:
     return scope
 
 
-def _judge(scope: SimulatedScope) -> object:
+def _judge(scope: SimulatedScope) -> AcquireResult:
     cap = scope.capture([ChannelId.CH1])
     return judge_capture(cap, scope._channels, DEFAULT_CAPABILITIES)
 
@@ -52,26 +53,26 @@ def _judge(scope: SimulatedScope) -> object:
 def test_judge_flags_clipping() -> None:
     scope = _scope()
     scope.configure_channel(ChannelConfig(channel=ChannelId.CH1, scale_v_per_div=0.1))  # clips
-    quality = _judge(scope)
-    assert quality.clipping[ChannelId.CH1] is True  # type: ignore[attr-defined]
-    assert quality.usable is False  # type: ignore[attr-defined]
+    result = _judge(scope)
+    assert result.channels[ChannelId.CH1].clipping is True
+    assert result.usable is False
 
 
 def test_judge_good_capture_is_usable() -> None:
     scope = _scope()
     scope.configure_channel(ChannelConfig(channel=ChannelId.CH1, scale_v_per_div=0.3))
-    quality = _judge(scope)
-    assert quality.triggered is True  # type: ignore[attr-defined]
-    assert quality.clipping[ChannelId.CH1] is False  # type: ignore[attr-defined]
-    assert quality.usable is True  # type: ignore[attr-defined]
+    result = _judge(scope)
+    assert result.triggered is True
+    assert result.channels[ChannelId.CH1].clipping is False
+    assert result.usable is True
 
 
 def test_judge_low_fill_noted_but_usable() -> None:
     scope = _scope()
     scope.configure_channel(ChannelConfig(channel=ChannelId.CH1, scale_v_per_div=5.0))  # tiny
-    quality = _judge(scope)
-    assert quality.fill_fraction[ChannelId.CH1] < 0.1  # type: ignore[attr-defined]
-    assert any("fills only" in n for n in quality.notes)  # type: ignore[attr-defined]
+    result = _judge(scope)
+    assert result.channels[ChannelId.CH1].fill_fraction < 0.1
+    assert any("fills only" in n for n in result.notes)
 
 
 def test_judge_untriggered_is_unusable() -> None:
@@ -83,6 +84,6 @@ def test_judge_untriggered_is_unusable() -> None:
             sweep=SweepMode.NORMAL,
         )
     )
-    quality = _judge(scope)
-    assert quality.triggered is False  # type: ignore[attr-defined]
-    assert quality.usable is False  # type: ignore[attr-defined]
+    result = _judge(scope)
+    assert result.triggered is False
+    assert result.usable is False

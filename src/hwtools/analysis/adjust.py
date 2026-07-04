@@ -1,7 +1,7 @@
 """Propose a configuration change from a capture's shortcomings.
 
-The second half of the self-correcting brain: given a
-:class:`~hwtools.model.quality.CaptureQuality` and the capture/config it came
+The second half of the self-correcting brain: given an
+:class:`~hwtools.model.reading.AcquireResult` and the capture/config it came
 from, suggest an :class:`~hwtools.model.quality.Adjustment` the loop applies
 before re-capturing. Pure — no instrument access.
 
@@ -20,7 +20,8 @@ from hwtools.model.capability import ScopeCapabilities
 from hwtools.model.capture import Capture
 from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId
-from hwtools.model.quality import Adjustment, CaptureQuality
+from hwtools.model.quality import Adjustment
+from hwtools.model.reading import AcquireResult
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import TriggerConfig
 
@@ -31,14 +32,14 @@ _LOW_FILL_FRAC = 0.3
 
 
 def suggest_adjustment(
-    quality: CaptureQuality,
+    result: AcquireResult,
     capture: Capture,
     channels: Mapping[ChannelId, ChannelConfig],
     timebase: TimebaseConfig,
     trigger: TriggerConfig | None,
     capabilities: ScopeCapabilities,
 ) -> Adjustment:
-    """Suggest config changes that move ``quality`` toward usable."""
+    """Suggest config changes that move ``result`` toward usable."""
     divisions_v = capabilities.vertical_divisions
     new_channels: dict[ChannelId, ChannelConfig] = {}
     reasons: list[str] = []
@@ -47,15 +48,20 @@ def suggest_adjustment(
         wf = capture.waveforms.get(channel)
         if wf is None:
             continue
+        reading = result.channels.get(channel)
         midline = (wf.vmax + wf.vmin) / 2.0
 
-        if quality.clipping.get(channel, False):
+        if reading is not None and reading.clipping:
             new_scale = config.scale_v_per_div * 2.0
             new_channels[channel] = config.model_copy(
                 update={"scale_v_per_div": new_scale, "offset_v": -midline}
             )
             reasons.append(f"{channel.name}: clipping, scale->{new_scale:g} V/div")
-        elif quality.fill_fraction.get(channel, 1.0) < _LOW_FILL_FRAC and wf.vpp > 0:
+        elif (
+            reading is not None
+            and reading.fill_fraction < _LOW_FILL_FRAC
+            and wf.vpp > 0
+        ):
             new_scale = wf.vpp / (_TARGET_FILL_FRAC * divisions_v)
             if new_scale < config.scale_v_per_div * 0.9:
                 new_channels[channel] = config.model_copy(
@@ -64,7 +70,7 @@ def suggest_adjustment(
                 reasons.append(f"{channel.name}: low fill, scale->{new_scale:g} V/div")
 
     new_trigger: TriggerConfig | None = None
-    if not quality.triggered and trigger is not None:
+    if not result.triggered and trigger is not None:
         source_wf = capture.waveforms.get(trigger.source)
         if source_wf is not None:
             level = (source_wf.vmax + source_wf.vmin) / 2.0
@@ -74,7 +80,7 @@ def suggest_adjustment(
             reasons.append(f"trigger level->{level:g} V")
 
     new_timebase: TimebaseConfig | None = None
-    if not quality.bandwidth_ok:
+    if not result.bandwidth_ok:
         new_timebase = timebase.model_copy(
             update={"scale_s_per_div": timebase.scale_s_per_div / 2.0}
         )

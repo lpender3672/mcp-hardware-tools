@@ -28,7 +28,7 @@ from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, Coupling, Slope, SweepMode
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
-from tests.hardware._acquire import acquire_single
+from tests.hardware._acquire import acquire_one_shot
 
 SCOPE_HOST = os.environ.get("HWTOOLS_SCOPE_HOST", "192.168.1.214")
 
@@ -65,14 +65,16 @@ def test_host_commanded_uart_round_trips_through_scope() -> None:
                 )
                 scope.configure_acquire(AcquireConfig(memory_depth=12_000))  # legal for 1 channel
                 # 2 ms/div -> deep 12k pts ~= 2 us/sample, ~50 samples/bit at 9600.
-                scope.configure_timebase(TimebaseConfig(scale_s_per_div=2e-3))
+                tb = TimebaseConfig(scale_s_per_div=2e-3)
+                scope.configure_timebase(tb)
                 scope.configure_trigger(
                     TriggerConfig(
                         trigger=EdgeTrigger(source=ChannelId.CH1, level_v=1.5, slope=Slope.FALLING),
                         sweep=SweepMode.SINGLE,
                     )
                 )
-                cap = acquire_single(scope, [ChannelId.CH1])  # single-shot, deep RAW read
+                # One UART frame is a one-shot event (the stream repeats, triggers fast).
+                cap = acquire_one_shot(scope, [ChannelId.CH1], tb)
         finally:
             harness.stop()
 

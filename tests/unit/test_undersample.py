@@ -9,12 +9,12 @@ from __future__ import annotations
 
 from hwtools.analysis.adjust import suggest_adjustment
 from hwtools.analysis.judge import judge_capture
-from hwtools.analysis.loop import capture_until_usable
 from hwtools.drivers.simulated import DEFAULT_CAPABILITIES, SimulatedScope, Square
 from hwtools.model.channel import ChannelConfig
 from hwtools.model.ids import ChannelId, Slope, SweepMode
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
+from hwtools.session.loop import capture_until_usable
 
 CH1 = ChannelId.CH1
 # 0.05 s/div -> ~2 samples per 1 kHz period.
@@ -36,17 +36,17 @@ def _scope() -> SimulatedScope:
 def test_judge_flags_undersampling() -> None:
     scope = _scope()
     cap = scope.capture([CH1])
-    quality = judge_capture(cap, scope._channels, DEFAULT_CAPABILITIES)
-    assert quality.bandwidth_ok is False
-    assert any("undersampled" in note for note in quality.notes)
+    result = judge_capture(cap, scope._channels, DEFAULT_CAPABILITIES)
+    assert result.bandwidth_ok is False
+    assert any("undersampled" in note for note in result.notes)
 
 
 def test_adjust_speeds_up_undersampled_timebase() -> None:
     scope = _scope()
     cap = scope.capture([CH1])
-    quality = judge_capture(cap, scope._channels, DEFAULT_CAPABILITIES)
+    result = judge_capture(cap, scope._channels, DEFAULT_CAPABILITIES)
     adjustment = suggest_adjustment(
-        quality, cap, scope._channels, _SLOW, _TRIGGER, DEFAULT_CAPABILITIES
+        result, cap, scope._channels, _SLOW, _TRIGGER, DEFAULT_CAPABILITIES
     )
     assert adjustment.timebase is not None
     assert adjustment.timebase.scale_s_per_div < _SLOW.scale_s_per_div

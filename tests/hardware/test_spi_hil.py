@@ -26,7 +26,7 @@ from hwtools.model.ids import ChannelId, Coupling, Slope, SweepMode
 from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import EdgeTrigger, TriggerConfig
 from hwtools.model.waveform import Waveform
-from tests.hardware._acquire import acquire_single
+from tests.hardware._acquire import acquire_one_shot
 
 CLK, MOSI, CS = ChannelId.CH1, ChannelId.CH2, ChannelId.CH3
 # Must match firmware/common/src/protocol.rs SPI_TEST_BYTES.
@@ -52,14 +52,16 @@ def test_spi_decode_round_trips(harness: SerialHarness, live_scope: DS1054Z) -> 
                 )
             )
         live_scope.configure_acquire(AcquireConfig(memory_depth=30_000))  # legal for 3 channels
-        live_scope.configure_timebase(TimebaseConfig(scale_s_per_div=3e-4))
+        tb = TimebaseConfig(scale_s_per_div=3e-4)
+        live_scope.configure_timebase(tb)
         live_scope.configure_trigger(
             TriggerConfig(
                 trigger=EdgeTrigger(source=CS, level_v=1.5, slope=Slope.FALLING),  # CS assert
                 sweep=SweepMode.SINGLE,
             )
         )
-        cap = acquire_single(live_scope, [CLK, MOSI, CS])  # single-shot, deep RAW read
+        # One SPI transaction is a one-shot event (it repeats, so it triggers fast).
+        cap = acquire_one_shot(live_scope, [CLK, MOSI, CS], tb)
     finally:
         harness.stop()
 
