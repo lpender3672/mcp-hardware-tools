@@ -17,7 +17,7 @@ from hwtools.model.trigger import EdgeTrigger, TriggerConfig
 from hwtools.tools.server import build_server
 from hwtools.tools.session import ScopeSession
 
-CH1 = ChannelId.CH1
+CH1, CH2, CH3 = ChannelId.CH1, ChannelId.CH2, ChannelId.CH3
 
 
 def _session(signal: SimSignal | None = None) -> ScopeSession:
@@ -108,6 +108,16 @@ def test_digital_decode_over_a_stored_square() -> None:
     assert int(np.count_nonzero(np.diff(trace.levels))) > 0
 
 
+def test_session_capabilities_judge_and_clear() -> None:
+    session = _session()
+    assert session.capabilities.n_channels == 4  # forwards the scope's capabilities
+    _acquire(session, sweep=SweepMode.AUTO)
+    result = session.judge({CH1: ChannelConfig(channel=CH1, scale_v_per_div=0.3)})
+    assert CH1 in result.channels  # re-judges a stored frame against a config
+    session.clear()
+    assert len(session.store) == 0
+
+
 def test_build_server_registers_the_tool_surface() -> None:
     session = _session()
     server = build_server(session)
@@ -115,3 +125,44 @@ def test_build_server_registers_the_tool_surface() -> None:
 
     names = {t.name for t in anyio.run(server.list_tools)}
     assert {"acquire", "describe", "triage", "decode_uart", "decode_spi", "decode_i2c"} <= names
+
+
+def test_server_tool_bodies_execute_over_the_session() -> None:
+    """Drive each MCP tool through call_tool against a sim-backed session, so the
+    server binding (not just registration) is exercised and locked against regression."""
+    import anyio
+
+    sq = Square(amplitude_v=1.6, frequency_hz=1_000.0)
+    session = ScopeSession(SimulatedScope({CH1: sq, CH2: sq, CH3: sq}))
+    server = build_server(session)
+
+    def run(name: str, args: dict[str, object]) -> object:
+        return anyio.run(server.call_tool, name, args)
+
+    # acquire (AUTO always yields a frame on the sim) -> stores a frame
+    run("acquire", {"channel": 1, "scale_v_per_div": 0.5, "timebase_s_per_div": 2e-3,
+                    "trigger_level_v": 0.0, "sweep": "AUTO"})
+    assert len(session.store) == 1
+    run("describe", {"channel": 1, "value_bins": 8, "psd": True})
+    run("triage", {})
+    run("decode_uart", {"channel": 1, "baud": 1000.0})
+    run("list_captures", {})
+
+    # A multi-channel frame for the SPI/I2C tool bodies (the acquire tool is
+    # single-channel, so stage it through the session directly).
+    session.acquire(
+        channels={ch: ChannelConfig(channel=ch, scale_v_per_div=0.5) for ch in (CH1, CH2, CH3)},
+        timebase=TimebaseConfig(scale_s_per_div=2e-3),
+        trigger=TriggerConfig(trigger=EdgeTrigger(source=CH1, level_v=0.0)),
+        sweep=SweepMode.SINGLE,
+    )
+    run("decode_spi", {"clk": 1, "mosi": 2, "cs": 3})
+    run("decode_i2c", {"sda": 2, "scl": 1})
+
+    # store-management tool bodies
+    cid = session.store.latest_id()
+    assert cid is not None
+    run("keep_capture", {"capture_id": cid, "label": "golden"})
+    assert session.store.info(cid).kept
+    run("drop_capture", {"capture_id": cid})
+    assert all(i.capture_id != cid for i in session.list_captures())

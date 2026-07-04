@@ -40,6 +40,16 @@ def _dc(ch: ChannelId = CH1) -> Waveform:
     return _wf(np.full(_N, 2.0), ch)
 
 
+def _triangle(ch: ChannelId = CH1) -> Waveform:
+    phase = (_t() * 1_000.0) % 1.0
+    tri = np.where(phase < 0.5, 4 * phase - 1, 3 - 4 * phase)  # -1..1 triangle
+    return _wf(tri, ch)
+
+
+def _ramp(ch: ChannelId = CH1) -> Waveform:
+    return _wf(np.linspace(-1.0, 1.0, _N), ch)  # a single non-repeating ramp
+
+
 def test_classifies_sine() -> None:
     c = classify(describe(_sine()))
     assert c.signal_class is SignalClass.SINE
@@ -61,6 +71,26 @@ def test_classifies_noise() -> None:
 def test_classifies_dc() -> None:
     c = classify(describe(_dc()))
     assert c.signal_class is SignalClass.FLAT_DC
+
+
+def test_classifies_triangle_as_modulated() -> None:
+    # Periodic (high autocorr) but neither a clean tone (crest ~1.73 > sine's 1.41)
+    # nor two-level -> the MODULATED fallback.
+    c = classify(describe(_triangle()))
+    assert c.signal_class is SignalClass.MODULATED
+
+
+def test_classifies_ramp_as_unknown() -> None:
+    # A single non-repeating ramp: aperiodic and not broadband -> no rule matches.
+    c = classify(describe(_ramp()))
+    assert c.signal_class is SignalClass.UNKNOWN
+
+
+def test_triage_skips_a_requested_channel_absent_from_the_capture() -> None:
+    cap = Capture(
+        waveforms={CH1: _sine(CH1)}, trigger_status=TriggerStatus.STOP, sample_rate_hz=1 / _DT
+    )
+    assert triage(cap, channels=CH2) == {}  # CH2 not present -> skipped, empty result
 
 
 def test_triage_runs_every_channel() -> None:
@@ -89,3 +119,16 @@ def test_cross_channel_hint_counts_digital_lines() -> None:
         sample_rate_hz=1 / _DT,
     )
     assert "I2C" in (cross_channel_hint(triage(two)) or "")
+
+
+def test_cross_channel_hint_one_and_zero_digital_lines() -> None:
+    one = Capture(
+        waveforms={CH1: _square(CH1), CH2: _sine(CH2)},
+        trigger_status=TriggerStatus.STOP,
+        sample_rate_hz=1 / _DT,
+    )
+    assert "UART" in (cross_channel_hint(triage(one)) or "")
+    none = Capture(
+        waveforms={CH1: _sine(CH1)}, trigger_status=TriggerStatus.STOP, sample_rate_hz=1 / _DT
+    )
+    assert cross_channel_hint(triage(none)) is None

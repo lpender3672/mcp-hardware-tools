@@ -32,6 +32,31 @@ def test_frequency_none_for_dc() -> None:
     assert measure.frequency(wf) is None
 
 
+def test_mean_and_rms() -> None:
+    wf = Waveform(
+        channel=ChannelId.CH1, samples=np.array([1.0, -1.0, 1.0, -1.0]), t0_s=0.0, dt_s=1e-6
+    )
+    assert measure.mean(wf) == pytest.approx(0.0)
+    assert measure.rms(wf) == pytest.approx(1.0)  # bipolar unit square: RMS = 1
+
+
+def test_mean_rms_nan_for_empty_waveform() -> None:
+    wf = Waveform(channel=ChannelId.CH1, samples=np.array([]), t0_s=0.0, dt_s=1e-6)
+    assert np.isnan(measure.mean(wf))
+    assert np.isnan(measure.rms(wf))
+
+
+def test_samples_per_period_counts_a_cycle() -> None:
+    wf = _sine_wf(1_000.0, dt_s=1e-6)  # 1 kHz, 1 us step -> ~1000 samples/period
+    spp = measure.samples_per_period(wf)
+    assert spp is not None and spp == pytest.approx(1_000.0, rel=0.05)
+
+
+def test_samples_per_period_none_for_flat() -> None:
+    wf = Waveform(channel=ChannelId.CH1, samples=np.full(100, 2.0), t0_s=0.0, dt_s=1e-6)
+    assert measure.samples_per_period(wf) is None
+
+
 def _scope() -> SimulatedScope:
     sig = {ChannelId.CH1: Sine(amplitude_v=1.0, frequency_hz=1_000.0)}
     scope = SimulatedScope(sig)
