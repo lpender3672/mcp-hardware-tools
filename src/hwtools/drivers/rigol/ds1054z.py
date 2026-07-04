@@ -81,6 +81,9 @@ class DS1054Z(Oscilloscope):
 
     def __init__(self, transport: Transport) -> None:
         self._t = transport
+        # Effective (clamped) per-channel vertical config we last applied, so the
+        # trigger level can be clamped to the source channel's on-screen range.
+        self._channels: dict[ChannelId, ChannelConfig] = {}
 
     @classmethod
     def over_tcp(cls, host: str, port: int = RIGOL_RAW_PORT) -> DS1054Z:
@@ -109,19 +112,36 @@ class DS1054Z(Oscilloscope):
 
     def configure_channel(self, config: ChannelConfig) -> None:
         n = int(config.channel)
+        probe = config.probe_ratio
+        # The DS1000Z silently clamps out-of-range/off-grid values and beeps
+        # "Parameter limited!" — a real divergence between our model and the
+        # instrument. Vertical scale is 1-2-5 quantized (10mV..100V at 10X);
+        # :VERNier only fine-adjusts *around* the current coarse step, so it does
+        # NOT accept an arbitrary scale (recommend's 1.25, the loop's x2 growth to
+        # 0.4/0.8). Snap to the nearest 1-2-5 step; clamp the offset to its
+        # (scale-dependent) documented range.
+        scale = _snap_1_2_5(config.scale_v_per_div, _SCALE_MIN_1X * probe, _SCALE_MAX_1X * probe)
+        limit = _offset_limit(scale, probe)
+        offset = _clamp(config.offset_v, -limit, limit)
+        self._channels[config.channel] = config.model_copy(
+            update={"scale_v_per_div": scale, "offset_v": offset}
+        )
         w = self._t.write
         w(f":CHANnel{n}:DISPlay {_onoff(config.enabled)}")
-        w(f":CHANnel{n}:PROBe {config.probe_ratio:g}")  # before SCALe: scale is probe-referred
+        w(f":CHANnel{n}:PROBe {probe:g}")  # before SCALe: scale is probe-referred
         w(f":CHANnel{n}:COUPling {config.coupling.value}")
-        w(f":CHANnel{n}:SCALe {config.scale_v_per_div:g}")
-        w(f":CHANnel{n}:OFFSet {config.offset_v:g}")
+        w(f":CHANnel{n}:SCALe {scale:g}")
+        w(f":CHANnel{n}:OFFSet {offset:g}")
         w(f":CHANnel{n}:BWLimit {'20M' if config.bandwidth_limit else 'OFF'}")
         w(f":CHANnel{n}:INVert {_onoff(config.invert)}")
 
     def configure_timebase(self, config: TimebaseConfig) -> None:
         w = self._t.write
         w(f":TIMebase:MODE {config.mode.value}")
-        w(f":TIMebase:MAIN:SCALe {config.scale_s_per_div:g}")
+        # The timebase has no SCPI fine adjustment — it is 1-2-5 quantized
+        # (5 ns .. 50 s). Snap to the nearest valid step so a computed value like
+        # 333 us does not clamp and beep "Parameter limited!".
+        w(f":TIMebase:MAIN:SCALe {_snap_1_2_5(config.scale_s_per_div, _TB_MIN, _TB_MAX):g}")
         w(f":TIMebase:MAIN:OFFSet {config.offset_s:g}")
 
     def configure_trigger(self, config: TriggerConfig) -> None:
@@ -129,9 +149,25 @@ class DS1054Z(Oscilloscope):
         w(":TRIGger:MODE EDGE")
         w(f":TRIGger:EDGe:SOURce CHANnel{int(config.source)}")
         w(f":TRIGger:EDGe:SLOPe {_SLOPE[config.trigger.slope]}")
-        w(f":TRIGger:EDGe:LEVel {config.trigger.level_v:g}")
+        # The edge trigger level is limited to +/-5 divisions of the source channel
+        # (programming guide: -5*Scale-Offset .. 5*Scale-Offset). Sending a level
+        # outside that (e.g. a first-guess 9 V at 0.1 V/div) clamps + beeps
+        # "Parameter limited!" and silently uses a different level. Clamp to the
+        # source's on-screen range using the vertical config we last applied.
+        w(f":TRIGger:EDGe:LEVel {self._clamp_trigger_level(config):g}")
         w(f":TRIGger:SWEep {_SWEEP[config.sweep]}")
         w(f":TRIGger:COUPling {_TRIG_COUPLING[config.coupling]}")
+
+    def _clamp_trigger_level(self, config: TriggerConfig) -> float:
+        level = config.trigger.level_v
+        src = self._channels.get(config.source)
+        if src is None:  # unknown source scale; send as-is
+            return level
+        # The documented range is +/-5 divisions, but setting the trigger *at* that
+        # edge is the "at limit" case the scope beeps "Parameter limited!" for
+        # (confirmed on the bench). Clamp to just inside the extended range.
+        span = _TRIGGER_LEVEL_DIVS * src.scale_v_per_div
+        return _clamp(level, -span - src.offset_v, span - src.offset_v)
 
     def configure_acquire(self, config: AcquireConfig) -> None:
         w = self._t.write
@@ -260,11 +296,13 @@ class DS1054Z(Oscilloscope):
         w(":WAVeform:MODE NORMal")
         w(":WAVeform:FORMat BYTE")
         pre = _Preamble.parse(self._t.query(":WAVeform:PREamble?"))
-        # :WAVeform:DATA? honours the *last* STARt/STOP window, which a prior RAW
-        # read leaves pointing deep into acquisition memory — a NORMal read that
-        # doesn't reset it comes back with a single byte. Pin the screen range.
+        # NORMal reads the 1200-point screen trace (programming guide S1-S4). Its
+        # STARt/STOP range is 1..1200 and STOP is clamped to the screen, so a stale
+        # high STOP from a prior RAW read is harmless — but a stale STARt > 1200
+        # (left by a multi-chunk RAW read) makes :WAV:DATA? return a single point.
+        # Pin STARt to 1; deliberately do NOT set STOP, so a screen read does not
+        # emit a "Stop point changed!" prompt on every call.
         w(":WAVeform:STARt 1")
-        w(f":WAVeform:STOP {pre.points}")
         raw = self._t.query_block(":WAVeform:DATA?")
         return self._scale(channel, raw, pre)
 
@@ -288,6 +326,38 @@ class DS1054Z(Oscilloscope):
 
 def _onoff(value: bool) -> str:
     return "ON" if value else "OFF"
+
+
+# Documented value grids/ranges (programming guide) the DS1000Z clamps against.
+_SCALE_MIN_1X = 1e-3  # :CHANnel:SCALe at 1X: 1 mV .. 10 V (scales with probe ratio)
+_SCALE_MAX_1X = 10.0
+_TB_MIN = 5e-9  # :TIMebase:MAIN:SCALe: 5 ns .. 50 s, 1-2-5 step
+_TB_MAX = 50.0
+# Trigger level range is +/-5 divisions, but setting it *at* the edge beeps
+# "Parameter limited!"; stay just inside.
+_TRIGGER_LEVEL_DIVS = 4.9
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def _offset_limit(scale: float, probe: float) -> float:
+    """Documented ``|offset|`` limit (V) for a vertical scale and probe ratio.
+
+    Programming guide :CHANnel:OFFSet — the range shrinks at small scales: at 1X,
+    ±100 V for scale ≥ 500 mV/div else ±2 V; both bounds scale with the probe ratio.
+    """
+    return (100.0 if scale >= 0.5 * probe else 2.0) * probe
+
+
+def _snap_1_2_5(value: float, lo: float, hi: float) -> float:
+    """Nearest value of the form m*10^k (m in {1,2,5}) within ``[lo, hi]``."""
+    value = _clamp(value, lo, hi)
+    exps = np.arange(int(np.floor(np.log10(lo))), int(np.floor(np.log10(hi))) + 1)
+    steps = np.array([m * 10.0**e for e in exps for m in (1.0, 2.0, 5.0)], dtype=np.float64)
+    steps = steps[(steps >= lo - 1e-15) & (steps <= hi * 1.0000001)]
+    return float(steps[np.argmin(np.abs(np.log(steps) - np.log(value)))])
 
 
 class _Preamble:

@@ -102,6 +102,13 @@ def acquire(
     ``trigger_timeout_s`` overrides how long a one-shot waits for its trigger (the
     default scales a generous fixed budget with the timebase).
     """
+    # Reconfigure while STOPPED. The DS1000Z binds Memory Depth = Sample Rate x
+    # (timebase x 12) on the *running* acquisition, so changing the timebase while
+    # it free-runs (e.g. autoset's wide 2 ms -> applied 500 us) conflicts with the
+    # live depth and beeps "Parameter limited!" before the next MDEPth AUTO
+    # re-settles. Stopping first lets configure_acquire's :RUN start clean at the
+    # new timebase. (Harmless on the simulated scope.)
+    scope.stop()
     configured = dict(channels)
     for config in configured.values():
         scope.configure_channel(config)

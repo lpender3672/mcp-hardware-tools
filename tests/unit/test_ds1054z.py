@@ -51,11 +51,77 @@ def test_configure_channel_emits_expected_scpi() -> None:
         ":CHANnel1:DISPlay ON",
         ":CHANnel1:PROBe 10",
         ":CHANnel1:COUPling DC",
-        ":CHANnel1:SCALe 0.5",
+        ":CHANnel1:SCALe 0.5",  # already a 1-2-5 step; sent unchanged
         ":CHANnel1:OFFSet -1",
         ":CHANnel1:BWLimit OFF",
         ":CHANnel1:INVert OFF",
     ]
+
+
+def test_non_1_2_5_scale_is_snapped_to_the_grid() -> None:
+    # recommend/adjust produce off-grid scales (1.25 V/div, or x2 growth to 0.4/0.8).
+    # The scope's scale is 1-2-5 constrained (VERNier only fine-tunes around a coarse
+    # step), so an off-grid value conflicts -> "Parameter limited!". Snap to the grid.
+    scope, fake = _scope()
+    scope.configure_channel(
+        ChannelConfig(channel=ChannelId.CH2, scale_v_per_div=1.25, probe_ratio=10.0)
+    )
+    assert ":CHANnel2:SCALe 1" in fake.log  # 1.25 -> nearest 1-2-5 step (1 V/div)
+    assert not any("VERNier" in cmd for cmd in fake.log)
+
+
+def test_channel_scale_and_offset_clamped_to_documented_range() -> None:
+    scope, fake = _scope()
+    # scale 200 V/div is over the 10X max (100 V); offset 50 V exceeds the ±20 V
+    # limit at 1 V/div, 10X (scale < 5 V/div). Both must be clamped, not clamped by
+    # the scope with a "Parameter limited!" beep.
+    scope.configure_channel(
+        ChannelConfig(channel=ChannelId.CH1, scale_v_per_div=200.0, probe_ratio=10.0)
+    )
+    assert ":CHANnel1:SCALe 100" in fake.log
+    fake.log.clear()
+    scope.configure_channel(
+        ChannelConfig(
+            channel=ChannelId.CH1, scale_v_per_div=1.0, offset_v=50.0, probe_ratio=10.0
+        )
+    )
+    assert ":CHANnel1:OFFSet 20" in fake.log
+
+
+def test_trigger_level_clamped_to_source_screen_range() -> None:
+    # At 0.1 V/div a first-guess 9 V level must clamp to just inside +/-5 div
+    # (4.9 div = 0.49 V) rather than be clamped by the scope ("Parameter limited!").
+    # Setting it *at* the +/-5 div edge is the "at limit" case that beeps.
+    scope, fake = _scope()
+    scope.configure_channel(
+        ChannelConfig(channel=ChannelId.CH2, scale_v_per_div=0.1, probe_ratio=10.0)
+    )
+    scope.configure_trigger(
+        TriggerConfig(
+            trigger=EdgeTrigger(source=ChannelId.CH2, level_v=9.0), sweep=SweepMode.SINGLE
+        )
+    )
+    assert ":TRIGger:EDGe:LEVel 0.49" in fake.log
+
+
+def test_trigger_level_unclamped_for_unconfigured_source() -> None:
+    # Without a known source scale the driver cannot bound it; send as-is.
+    scope, fake = _scope()
+    scope.configure_trigger(
+        TriggerConfig(
+            trigger=EdgeTrigger(source=ChannelId.CH2, level_v=1.2), sweep=SweepMode.SINGLE
+        )
+    )
+    assert ":TRIGger:EDGe:LEVel 1.2" in fake.log
+
+
+def test_timebase_snapped_to_1_2_5_step() -> None:
+    scope, fake = _scope()
+    scope.configure_timebase(TimebaseConfig(scale_s_per_div=3.33e-4))  # 333 us
+    assert ":TIMebase:MAIN:SCALe 0.0005" in fake.log  # snapped to 500 us
+    fake.log.clear()
+    scope.configure_timebase(TimebaseConfig(scale_s_per_div=1e-3))  # already 1-2-5
+    assert ":TIMebase:MAIN:SCALe 0.001" in fake.log
 
 
 def test_configure_timebase_emits_mode_scale_offset() -> None:
@@ -80,6 +146,28 @@ def test_configure_trigger_maps_enums() -> None:
     assert ":TRIGger:EDGe:SLOPe NEGative" in fake.log
     assert ":TRIGger:EDGe:LEVel 1.2" in fake.log
     assert ":TRIGger:SWEep SINGle" in fake.log
+
+
+def test_run_control_commands() -> None:
+    scope, fake = _scope(queries={":TRIGger:STATus?": "STOP"})
+    scope.run()
+    scope.stop()
+    scope.single()
+    scope.force_trigger()
+    assert scope.trigger_status() is TriggerStatus.STOP
+    assert fake.log == [":RUN", ":STOP", ":SINGle", ":TFORce", ":TRIGger:STATus?"]
+
+
+def test_trigger_status_rejects_unknown_reply() -> None:
+    scope, _ = _scope(queries={":TRIGger:STATus?": "BOGUS"})
+    with pytest.raises(ValueError, match="unexpected trigger status"):
+        scope.trigger_status()
+
+
+def test_autoscale_emits_scpi() -> None:
+    scope, fake = _scope()
+    scope.autoscale()
+    assert fake.log == [":AUToscale"]
 
 
 def _display(states: dict[int, str]) -> dict[str, str]:
@@ -226,6 +314,11 @@ def test_screen_capture_uses_normal_mode() -> None:
     assert ":WAVeform:MODE NORMal" in fake.log
     assert ":WAVeform:MODE RAW" not in fake.log
     assert ":STOP" not in fake.log  # screen read leaves the run state alone
+    # The NORMal read pins STARt to 1 (a stale STARt > 1200 from a prior RAW read
+    # otherwise makes :WAV:DATA? return a single point). It must NOT set :WAV:STOP,
+    # which would chirp "Stop point changed!" on every screen read.
+    assert ":WAVeform:STARt 1" in fake.log
+    assert not any(cmd.startswith(":WAVeform:STOP") for cmd in fake.log)
     np.testing.assert_allclose(cap.waveforms[ChannelId.CH1].samples, [0.0, 1.0, -1.0, 3.0])
 
 

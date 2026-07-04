@@ -52,7 +52,7 @@ def test_spi_decode_round_trips(harness: SerialHarness, live_scope: DS1054Z) -> 
                 )
             )
         live_scope.configure_acquire(AcquireConfig(memory_depth=30_000))  # legal for 3 channels
-        tb = TimebaseConfig(scale_s_per_div=3e-4)
+        tb = TimebaseConfig(scale_s_per_div=5e-4)  # 1-2-5 valid; wide enough for the transaction
         live_scope.configure_timebase(tb)
         live_scope.configure_trigger(
             TriggerConfig(
