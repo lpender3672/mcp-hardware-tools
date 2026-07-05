@@ -23,10 +23,9 @@ import time
 
 import numpy as np
 import pytest
-from scipy import signal as sps
 
 from hwtools.analysis.describe import describe
-from hwtools.analysis.spectrum import psd_slope_db_per_decade
+from hwtools.analysis.spectrum import psd_slope_db_per_decade, welch_psd
 from hwtools.drivers.joyit import JDS6600
 from hwtools.drivers.rigol.ds1054z import DS1054Z
 from hwtools.model.acquire import AcquireConfig
@@ -128,7 +127,8 @@ def test_band_limited_noise_lands_in_its_window_and_sweeps(
     wf = _deep_capture(live_scope)
 
     band_lo, band_hi = low_cycles * _REPLAY_HZ, high_cycles * _REPLAY_HZ
-    freqs, psd = sps.welch(wf.samples, fs=wf.sample_rate_hz, nperseg=4096)
+    spec = welch_psd(wf, nperseg=4096)
+    freqs, psd = spec.frequencies_hz, spec.values
     in_band = (freqs >= band_lo) & (freqs <= band_hi)
     out_band = (freqs > band_hi * 1.5) & (freqs < wf.sample_rate_hz * 0.45)
     centroid = float(np.sum(freqs[in_band] * psd[in_band]) / np.sum(psd[in_band]))
