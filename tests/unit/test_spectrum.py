@@ -48,3 +48,57 @@ def test_psd_has_density_units_and_finds_the_tone() -> None:
     peak = spec.peak()
     assert peak is not None
     assert peak[0] == pytest.approx(10_000.0, rel=1e-2)
+
+
+# -- harmonic content ---------------------------------------------------------
+
+_F0 = 1_000.0
+
+
+def _periodic(kind: str, *, fs: float = 1e6, periods: int = 100) -> Waveform:
+    """One coherent capture (integer periods) of a unit-amplitude shape at _F0."""
+    from scipy import signal as sps
+
+    n = round(fs / _F0 * periods)
+    phase = 2 * np.pi * _F0 * np.arange(n) / fs
+    if kind == "sine":
+        samples = np.sin(phase)
+    elif kind == "square":
+        samples = np.sign(np.sin(phase))
+    elif kind == "triangle":
+        samples = sps.sawtooth(phase, width=0.5)
+    else:  # sawtooth (all harmonics, 1/n)
+        samples = sps.sawtooth(phase)
+    return Waveform(channel=ChannelId.CH1, samples=samples, t0_s=0.0, dt_s=1.0 / fs)
+
+
+def test_harmonic_amplitudes_square_is_odd_one_over_n() -> None:
+    amps = spectrum.harmonic_amplitudes(_periodic("square"), _F0, 5)
+    h1, h2, h3, h4, h5 = amps
+    assert h3 / h1 == pytest.approx(1 / 3, rel=0.03)  # 3rd ~ -9.5 dB
+    assert h5 / h1 == pytest.approx(1 / 5, rel=0.03)  # 5th ~ -14 dB
+    assert h2 / h1 < 0.01  # even harmonics suppressed
+    assert h4 / h1 < 0.01
+
+
+def test_harmonic_amplitudes_triangle_is_odd_one_over_n_squared() -> None:
+    amps = spectrum.harmonic_amplitudes(_periodic("triangle"), _F0, 5)
+    h1, _h2, h3, _h4, h5 = amps
+    assert h3 / h1 == pytest.approx(1 / 9, rel=0.05)  # 3rd ~ -19 dB
+    assert h5 / h1 == pytest.approx(1 / 25, rel=0.08)  # 5th ~ -28 dB
+
+
+def test_thd_matches_textbook_values() -> None:
+    assert spectrum.thd(_periodic("sine"), _F0) < 0.01  # pure tone
+    # The square's 1/n series converges slowly, so sum enough harmonics to approach
+    # the textbook 48.3 %; the default 10 would truncate at ~43 %.
+    assert spectrum.thd(_periodic("square"), _F0, n_harmonics=50) == pytest.approx(0.483, abs=0.02)
+    assert spectrum.thd(_periodic("triangle"), _F0) == pytest.approx(0.121, abs=0.02)
+
+
+def test_harmonic_amplitudes_rejects_bad_args() -> None:
+    wf = _periodic("sine")
+    with pytest.raises(ValueError, match="fundamental_hz"):
+        spectrum.harmonic_amplitudes(wf, 0.0, 3)
+    with pytest.raises(ValueError, match="search_frac"):
+        spectrum.harmonic_amplitudes(wf, _F0, 3, search_frac=0.6)
