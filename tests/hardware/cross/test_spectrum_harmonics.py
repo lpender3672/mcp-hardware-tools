@@ -123,21 +123,30 @@ class Envelope:
 HarmonicModel = Fourier | Envelope | None  # None -> broadband, no harmonic check
 
 
+# Absolute tolerance when a shape's crest factor (peak/rms) has a closed form.
+_CREST_TOL = 0.08
+_SQRT2 = math.sqrt(2)  # sine crest
+_SQRT3 = math.sqrt(3)  # triangle crest
+
+
 @dataclass(frozen=True)
 class ShapeSpec:
     trigger_v: float
-    crest: tuple[float, float]
+    crest: float | tuple[float, float]  # theoretical crest, or an empirical (lo, hi) band
     harmonics: HarmonicModel
     peak_mult: float | None = 1.0  # expected peak_hz / f0, or None to skip
 
 
 SPECS: dict[WaveShape, ShapeSpec] = {
-    WaveShape.SINE: ShapeSpec(0.0, (1.35, 1.55), Fourier(_pure)),
+    # Crest as a bare float => theoretical (peak/rms): sine sqrt(2), square 1,
+    # triangle sqrt(3). A (lo, hi) tuple => empirical, for shapes with no closed form
+    # (or where the DDS bandlimit softens the peak below theory, e.g. the sawtooth).
+    WaveShape.SINE: ShapeSpec(0.0, _SQRT2, Fourier(_pure)),
     WaveShape.PARTIAL_SINE: ShapeSpec(0.0, (1.35, 1.55), Fourier(_pure)),
-    WaveShape.SQUARE: ShapeSpec(0.0, (0.95, 1.15), Fourier(_square)),
-    WaveShape.PULSE: ShapeSpec(0.0, (0.95, 1.15), Fourier(_square)),
-    WaveShape.CMOS: ShapeSpec(1.0, (0.95, 1.20), Fourier(_square)),
-    WaveShape.TRIANGLE: ShapeSpec(0.0, (1.65, 1.85), Fourier(_triangle)),
+    WaveShape.SQUARE: ShapeSpec(0.0, 1.0, Fourier(_square)),
+    WaveShape.PULSE: ShapeSpec(0.0, 1.0, Fourier(_square)),
+    WaveShape.CMOS: ShapeSpec(1.0, 1.0, Fourier(_square)),
+    WaveShape.TRIANGLE: ShapeSpec(0.0, _SQRT3, Fourier(_triangle)),
     WaveShape.POS_STEP: ShapeSpec(0.0, (1.45, 1.80), Fourier(_sawtooth)),
     WaveShape.NEG_STEP: ShapeSpec(0.0, (1.45, 1.80), Fourier(_sawtooth)),
     WaveShape.HALF_WAVE: ShapeSpec(1.0, (1.20, 1.55), Fourier(_half_wave)),
@@ -243,9 +252,14 @@ def test_shape_spectral_fingerprint(
     wf = _capture(generator, live_scope, shape, spec, f0)
     features = describe(wf, psd=True)
 
-    lo, hi = spec.crest
     crest = features.crest_factor
-    assert lo <= crest <= hi, f"crest {crest:.2f} outside {spec.crest} for {shape.value}"
+    if isinstance(spec.crest, tuple):  # empirical band (no closed form)
+        lo, hi = spec.crest
+        assert lo <= crest <= hi, f"crest {crest:.2f} outside {spec.crest} for {shape.value}"
+    else:  # theoretical crest factor
+        assert crest == pytest.approx(spec.crest, abs=_CREST_TOL), (
+            f"crest {crest:.2f} != theory {spec.crest:.3f} for {shape.value}"
+        )
 
     if spec.harmonics is None:  # noise: no clean fundamental at f0
         assert features.peak_hz is None or not (0.95 * f0 <= features.peak_hz <= 1.05 * f0)

@@ -4,7 +4,10 @@ carry the right dense data."""
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
+import pytest
 
 from hwtools.analysis.describe import describe
 from hwtools.model.ids import ChannelId
@@ -44,15 +47,16 @@ def _dc(value: float = 2.0) -> Waveform:
 # -- feature vector: shape discrimination -------------------------------------
 
 
-def test_crest_factor_separates_shapes() -> None:
-    # ~1 square, ~1.41 sine, >2.5 gaussian noise.
-    assert describe(_square()).crest_factor < 1.2
-    assert 1.2 < describe(_sine()).crest_factor < 1.7
+def test_crest_factor_matches_theory() -> None:
+    # crest = peak / rms has a closed form for these ideal (noise-free) shapes:
+    # square 1, sine sqrt(2), triangle sqrt(3). Gaussian-noise crest is statistical.
+    assert describe(_square()).crest_factor == pytest.approx(1.0, abs=0.02)
+    assert describe(_sine()).crest_factor == pytest.approx(math.sqrt(2), abs=0.02)
     assert describe(_noise()).crest_factor > 2.5
 
 
 def test_spectral_flatness_separates_tone_from_noise() -> None:
-    assert describe(_sine()).spectral_flatness < 0.05  # a pure tone concentrates power
+    assert describe(_sine()).spectral_flatness < 0.01  # a pure tone -> flatness ~ 0
     assert describe(_noise()).spectral_flatness > 0.3  # broadband noise spreads it
 
 
