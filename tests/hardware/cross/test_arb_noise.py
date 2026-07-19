@@ -74,8 +74,11 @@ def _deep_capture(scope: DS1054Z) -> Waveform:
 
 def _capture_noise(generator: JDS6600, scope: DS1054Z, color: NoiseColor) -> Waveform:
     caps = generator.capabilities
+    assert caps.arb_length is not None
     slot = caps.arb_slots
-    generator.upload_arbitrary(slot, noise_arbitrary(caps.arb_points, color, seed=11))
+    generator.upload_arbitrary(
+        slot, noise_arbitrary(caps.arb_length.representative_length(), color, seed=11)
+    )
     _play(generator, slot)
     return _deep_capture(scope)
 
@@ -116,11 +119,15 @@ def test_band_limited_noise_lands_in_its_window_and_sweeps(
     the band moves the measured energy — the sweepable narrow-band stimulus. The arb's
     broadband replay is compromised, but *within a window* the noise is accurate."""
     caps = generator.capabilities
+    assert caps.arb_length is not None
     slot = caps.arb_slots
     generator.upload_arbitrary(
         slot,
         band_limited_noise_arbitrary(
-            caps.arb_points, low_cycles=low_cycles, high_cycles=high_cycles, seed=3
+            caps.arb_length.representative_length(),
+            low_cycles=low_cycles,
+            high_cycles=high_cycles,
+            seed=3,
         ),
     )
     _play(generator, slot)

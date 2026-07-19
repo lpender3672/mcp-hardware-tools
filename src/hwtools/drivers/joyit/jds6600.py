@@ -28,13 +28,18 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+import numpy as np
+
 from hwtools.interfaces.signal_generator import SignalGenerator
 from hwtools.model.siggen import (
     ArbitraryWaveform,
+    ArbLength,
+    PlaybackMode,
     SigGenCapabilities,
     SigGenChannel,
     SignalGeneratorConfig,
     WaveShape,
+    check_arbitrary_length,
     check_within,
 )
 
@@ -86,8 +91,9 @@ _CAPABILITIES = SigGenCapabilities(
     max_amplitude_vpp=20.0,  # device clamps amplitude writes to 20_000 mV
     max_offset_v=9.99,
     waveforms=tuple(_SHAPE_CODE),
+    playback_modes=frozenset({PlaybackMode.CONTINUOUS}),  # pure DDS: continuous loop only
     arb_slots=_ARB_SLOTS,
-    arb_points=_ARB_POINTS,
+    arb_length=ArbLength.fixed(_ARB_POINTS),  # fixed 2048-point DDS wavetable
     arb_code_levels=_ARB_CODE_LEVELS,
 )
 
@@ -221,13 +227,9 @@ class JDS6600(SignalGenerator):
 
     def upload_arbitrary(self, slot: int, wave: ArbitraryWaveform) -> None:
         self._check_slot(slot)
-        if wave.n != _ARB_POINTS:
-            raise ValueError(
-                f"the {_CAPABILITIES.model_name} takes exactly {_ARB_POINTS}-point "
-                f"arbitrary waveforms; got {wave.n}"
-            )
-        codes = [round((s + 1.0) / 2.0 * _ARB_CODE_MAX) for s in wave.samples]
-        reply = self._command("a", slot, ",".join(str(c) for c in codes))
+        check_arbitrary_length(wave.n, _CAPABILITIES)
+        codes = np.rint((wave.samples + 1.0) / 2.0 * _ARB_CODE_MAX).astype(np.int64)
+        reply = self._command("a", slot, ",".join(map(str, codes.tolist())))
         if reply.lstrip(":").lower() != "ok":
             raise RuntimeError(f"arbitrary upload to slot {slot} rejected: {reply!r}")
 
@@ -237,10 +239,10 @@ class JDS6600(SignalGenerator):
         prefix = f":b{slot:02d}="
         if not reply.startswith(prefix):
             raise RuntimeError(f"arbitrary read of slot {slot} unexpected reply: {reply!r}")
-        codes = [int(x) for x in reply[len(prefix) :].rstrip(".").split(",") if x]
-        return ArbitraryWaveform(
-            samples=tuple(code / _ARB_CODE_MAX * 2.0 - 1.0 for code in codes)
+        codes = np.array(
+            [int(x) for x in reply[len(prefix) :].rstrip(".").split(",") if x], dtype=np.float64
         )
+        return ArbitraryWaveform(samples=codes / _ARB_CODE_MAX * 2.0 - 1.0)
 
     def _check_slot(self, slot: int) -> None:
         if not 1 <= slot <= _ARB_SLOTS:

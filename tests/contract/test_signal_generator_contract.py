@@ -15,18 +15,38 @@ import pytest
 
 from hwtools.drivers.joyit.jds6600 import JDS6600
 from hwtools.drivers.simulated import SimulatedSignalGenerator
+from hwtools.drivers.simulated.signal_generator import DEFAULT_CAPABILITIES
 from hwtools.interfaces.signal_generator import SignalGenerator
 from hwtools.model.siggen import (
     ArbitraryWaveform,
+    ArbLength,
+    PlaybackMode,
     SigGenChannel,
     SignalGeneratorConfig,
     WaveShape,
+)
+
+# A simulated *variable-length, deep-memory* generator — DG1000Z-shaped: 8..16384
+# points per upload, 14-bit codes, burst-capable. Running the whole contract against
+# this alongside the fixed-length JDS6600 profile proves the abstraction spans both
+# device families in CI, before any Rigol hardware is on the bench.
+_VARIABLE_ARB_PROFILE = DEFAULT_CAPABILITIES.model_copy(
+    update={
+        "model_name": "SimulatedVariableAWG",
+        "max_frequency_hz": 60e6,
+        "playback_modes": frozenset(
+            {PlaybackMode.CONTINUOUS, PlaybackMode.BURST, PlaybackMode.SWEEP}
+        ),
+        "arb_length": ArbLength(min_points=8, max_points=16384),
+        "arb_code_levels": 16384,
+    }
 )
 
 
 @pytest.fixture(
     params=[
         pytest.param("sim", id="simulated"),
+        pytest.param("sim_awg", id="simulated-variable-awg"),
         pytest.param("real", id="jds6600", marks=pytest.mark.hardware),
     ]
 )
@@ -34,6 +54,8 @@ def generator(request: pytest.FixtureRequest) -> Iterator[SignalGenerator]:
     instrument: SignalGenerator
     if request.param == "sim":
         instrument = SimulatedSignalGenerator()
+    elif request.param == "sim_awg":
+        instrument = SimulatedSignalGenerator(capabilities=_VARIABLE_ARB_PROFILE)
     else:
         port = os.environ.get("HWTOOLS_JDS6600_PORT", "COM7")
         instrument = JDS6600(port)
@@ -107,9 +129,10 @@ def test_phase_in_range_is_accepted(generator: SignalGenerator) -> None:
 
 def test_arbitrary_upload_read_round_trips(generator: SignalGenerator) -> None:
     caps = generator.capabilities
-    if caps.arb_slots == 0:
+    if not caps.supports_arbitrary():
         pytest.skip("no arbitrary-waveform support")
-    n = caps.arb_points
+    assert caps.arb_length is not None  # narrowed by supports_arbitrary()
+    n = caps.arb_length.representative_length()
     ramp = tuple(-1.0 + 2.0 * i / (n - 1) for i in range(n))  # one-period sawtooth
     slot = caps.arb_slots  # highest slot, to avoid clobbering low front-panel presets
     generator.upload_arbitrary(slot, ArbitraryWaveform(samples=ramp))

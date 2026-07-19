@@ -62,8 +62,10 @@ def test_analytic_arb_replays_with_expected_shape(
     tol: float,
 ) -> None:
     caps = generator.capabilities
+    assert caps.arb_length is not None
     slot = caps.arb_slots
-    generator.upload_arbitrary(slot, analytic_arbitrary(shape, points=caps.arb_points))
+    n = caps.arb_length.representative_length()
+    generator.upload_arbitrary(slot, analytic_arbitrary(shape, points=n))
     generator.configure_channel(
         SignalGeneratorConfig(
             channel=GEN_CH, frequency_hz=1_000.0, amplitude_vpp=4.0, arb_slot=slot, enabled=True
