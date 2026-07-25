@@ -4,7 +4,17 @@ An [MCP](https://modelcontextprotocol.io) server that gives Claude direct contro
 
 The tool *is* the scope. The interesting part is that Claude closes the loop on its own setup: it generates a capture, judges whether it's usable, notices a missed trigger or a clipped signal or a timebase that hides the edge of interest, adjusts, and re-captures. That convergence is the product, and it's meant to live in your daily MCP setup and save the hours otherwise spent nudging knobs by hand.
 
-> **Status:** early / clean slate. This README describes the intended architecture, not a finished implementation. Interfaces will change.
+> **Status:** bench-validated, but not yet used on an external project. The scope and signal-generator drivers, the acquisition primitives, the decoders and the harness firmware all have hardware-in-the-loop coverage against a real DS1054Z, JDS6600 and Pico 2, and every DS1054Z driver pathway has an on-scope test. What it has not done yet is debug something it did not already know the answer to — everything so far has been checked against signals the harness produced deliberately. Interfaces may still change.
+
+## Where this came from
+
+This started from two of my own problems rather than as a general idea.
+
+The first was **electrochemical impedance spectroscopy** — recovering how impedance varies with frequency, which means exciting a system across a band and measuring the response accurately enough to trust the result. The second was **bringing up a field-oriented motor controller**, where the questions are about phase currents, commutation timing, and whether the rotor angle is where the firmware thinks it is.
+
+Those look unrelated, but the bench work is the same in both: produce a controlled stimulus, capture the response without the instrument quietly lying to you about it, and do the analysis in software rather than reading numbers off a screen. Both are also iterative — on an unfamiliar signal you do not know the right timebase, trigger level or vertical scale on the first attempt, and the time goes on the convergence rather than the measurement. That is the loop this server automates, and it generalised out of those two jobs into something instrument-agnostic.
+
+The system identification thread in [`docs/future-work.md`](docs/future-work.md) is the EIS half resurfacing: a wideband noise source plus cross-spectrum and coherence recovers a frequency response in one shot, which is the measurement EIS wanted in the first place.
 
 ## What it does
 
