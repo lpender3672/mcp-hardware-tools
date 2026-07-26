@@ -22,6 +22,8 @@ Leaves CH1 on a benign 1 kHz 2 Vpp built-in sine.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from hwtools.analysis.describe import describe
@@ -39,11 +41,12 @@ SCOPE_CH = ChannelId.CH1
 GEN_CH = SigGenChannel.CH1
 _TB = TimebaseConfig(scale_s_per_div=2e-3)  # ~24 cycles of 1 kHz on screen
 
-# (shape, ideal crest, tolerance). The square band is wide to admit the edge-ringing
-# overshoot while staying clear of the sine band (1.414 - 0.1 = 1.314 > 1.3).
+# (shape, theoretical crest factor, tolerance). Crest = peak/rms: sine sqrt(2),
+# triangle sqrt(3), square 1. The square band is wide to admit the DAC edge-ringing
+# overshoot while staying clear of the sine band (sqrt(2) - 0.1 = 1.31 > 1.3).
 _SHAPES = [
-    (WaveShape.SINE, 1.414, 0.1),
-    (WaveShape.TRIANGLE, 1.732, 0.1),
+    (WaveShape.SINE, math.sqrt(2), 0.1),
+    (WaveShape.TRIANGLE, math.sqrt(3), 0.1),
     (WaveShape.SQUARE, 1.0, 0.3),
 ]
 
@@ -59,8 +62,10 @@ def test_analytic_arb_replays_with_expected_shape(
     tol: float,
 ) -> None:
     caps = generator.capabilities
+    assert caps.arb_length is not None
     slot = caps.arb_slots
-    generator.upload_arbitrary(slot, analytic_arbitrary(shape, points=caps.arb_points))
+    n = caps.arb_length.representative_length()
+    generator.upload_arbitrary(slot, analytic_arbitrary(shape, points=n))
     generator.configure_channel(
         SignalGeneratorConfig(
             channel=GEN_CH, frequency_hz=1_000.0, amplitude_vpp=4.0, arb_slot=slot, enabled=True

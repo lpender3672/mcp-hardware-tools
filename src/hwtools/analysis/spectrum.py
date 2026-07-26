@@ -110,6 +110,57 @@ def welch_psd(
     )
 
 
+def harmonic_amplitudes(
+    wf: Waveform,
+    fundamental_hz: float,
+    n_harmonics: int,
+    *,
+    window: str = DEFAULT_WINDOW,
+    search_frac: float = 0.25,
+) -> list[float]:
+    """Amplitude (volts) at each of the first ``n_harmonics`` multiples of the
+    fundamental — index 0 is the fundamental itself, index 1 the 2nd harmonic, etc.
+
+    For each harmonic ``k`` the *peak* amplitude within ``+/- search_frac*fundamental``
+    of ``k*fundamental`` is taken, so a small mistuning or a leakage skirt doesn't
+    make it read zero. ``search_frac`` must be < 0.5 so the search band never reaches
+    a neighbouring harmonic. Capture many periods (fine bins) for a clean read.
+    """
+    if fundamental_hz <= 0:
+        raise ValueError("fundamental_hz must be positive")
+    if not 0.0 < search_frac < 0.5:
+        raise ValueError("search_frac must be in (0, 0.5)")
+    spec = amplitude_spectrum(wf, window=window)
+    freqs, amps = spec.frequencies_hz, spec.values
+    half = search_frac * fundamental_hz
+    out: list[float] = []
+    for k in range(1, n_harmonics + 1):
+        center = k * fundamental_hz
+        band = (freqs >= center - half) & (freqs <= center + half)
+        out.append(float(amps[band].max()) if bool(band.any()) else 0.0)
+    return out
+
+
+def thd(
+    wf: Waveform,
+    fundamental_hz: float,
+    *,
+    n_harmonics: int = 10,
+    window: str = DEFAULT_WINDOW,
+) -> float:
+    """Total harmonic distortion: ``sqrt(Σ h_k², k≥2) / h_1`` over ``n_harmonics``.
+
+    ~0 for a pure sine, ~0.48 for an ideal square, ~0.12 for a triangle. Raises if
+    there is no energy at the fundamental.
+    """
+    amps = harmonic_amplitudes(wf, fundamental_hz, n_harmonics, window=window)
+    fundamental = amps[0]
+    if fundamental <= 0:
+        raise ValueError("no energy at the fundamental; cannot compute THD")
+    rest = np.asarray(amps[1:], dtype=np.float64)
+    return float(np.sqrt(np.sum(rest**2)) / fundamental)
+
+
 def psd_slope_db_per_decade(
     wf: Waveform,
     *,
@@ -152,36 +203,50 @@ def spectral_flatness(wf: Waveform, *, window: str = DEFAULT_WINDOW) -> float:
     return geo_mean / arith_mean if arith_mean > 0 else 0.0
 
 
+def peak_frequency_and_prominence(
+    wf: Waveform,
+    *,
+    window: str = DEFAULT_WINDOW,
+    min_prominence: float = DEFAULT_PEAK_PROMINENCE,
+) -> tuple[float | None, float]:
+    """The dominant tone's (sub-bin) frequency and its prominence over the noise floor.
+
+    Locates the strongest non-DC bin of the amplitude spectrum, measures its
+    prominence (peak / spectral median), and — when that clears ``min_prominence`` —
+    refines the frequency with a parabolic fit. Returns ``(None, prominence)`` when no
+    bin stands out, so a caller can still read how tonal the spectrum is. Computing
+    both here lets ``describe`` characterise a tone with a single periodogram.
+    """
+    if wf.n < 8 or wf.vpp <= 0:
+        return None, 0.0
+    spectrum = amplitude_spectrum(wf, window=window)
+    values = spectrum.values.copy()
+    if values.size < 3:
+        return None, 0.0
+    values[0] = 0.0
+
+    index = int(np.argmax(values))
+    if index == 0:
+        return None, 0.0
+    median = float(np.median(values))
+    prominence = float(values[index] / median) if median > 0 else 0.0
+    if median <= 0 or prominence < min_prominence:
+        return None, prominence
+
+    offset = _parabolic_offset(values, index)
+    bin_hz = float(spectrum.frequencies_hz[1] - spectrum.frequencies_hz[0])
+    freq = float(spectrum.frequencies_hz[index]) + offset * bin_hz
+    return freq, prominence
+
+
 def peak_frequency(
     wf: Waveform,
     *,
     window: str = DEFAULT_WINDOW,
     min_prominence: float = DEFAULT_PEAK_PROMINENCE,
 ) -> float | None:
-    """Dominant tone frequency, or None when no bin stands above the noise floor.
-
-    Locates the strongest non-DC bin of the amplitude spectrum, requires it to
-    exceed ``min_prominence`` times the median (noise floor), and refines it with
-    a parabolic fit for sub-bin accuracy.
-    """
-    if wf.n < 8 or wf.vpp <= 0:
-        return None
-    spectrum = amplitude_spectrum(wf, window=window)
-    values = spectrum.values.copy()
-    if values.size < 3:
-        return None
-    values[0] = 0.0
-
-    index = int(np.argmax(values))
-    if index == 0:
-        return None
-    noise_floor = float(np.median(values))
-    if noise_floor <= 0 or values[index] < min_prominence * noise_floor:
-        return None
-
-    offset = _parabolic_offset(values, index)
-    bin_hz = float(spectrum.frequencies_hz[1] - spectrum.frequencies_hz[0])
-    return float(spectrum.frequencies_hz[index]) + offset * bin_hz
+    """Dominant tone frequency, or None when no bin stands above the noise floor."""
+    return peak_frequency_and_prominence(wf, window=window, min_prominence=min_prominence)[0]
 
 
 def _parabolic_offset(values: npt.NDArray[np.float64], index: int) -> float:

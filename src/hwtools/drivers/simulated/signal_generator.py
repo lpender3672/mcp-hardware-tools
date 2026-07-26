@@ -11,10 +11,12 @@ from __future__ import annotations
 from hwtools.interfaces.signal_generator import SignalGenerator
 from hwtools.model.siggen import (
     ArbitraryWaveform,
+    ArbLength,
     SigGenCapabilities,
     SigGenChannel,
     SignalGeneratorConfig,
     WaveShape,
+    check_arbitrary_length,
     check_within,
 )
 
@@ -26,7 +28,7 @@ DEFAULT_CAPABILITIES = SigGenCapabilities(
     max_offset_v=9.99,
     waveforms=tuple(WaveShape),
     arb_slots=60,
-    arb_points=2048,
+    arb_length=ArbLength.fixed(2048),
     arb_code_levels=4096,
 )
 
@@ -71,11 +73,7 @@ class SimulatedSignalGenerator(SignalGenerator):
 
     def upload_arbitrary(self, slot: int, wave: ArbitraryWaveform) -> None:
         self._check_slot(slot)
-        if wave.n != self._caps.arb_points:
-            raise ValueError(
-                f"the {self._caps.model_name} takes exactly {self._caps.arb_points}-point "
-                f"arbitrary waveforms; got {wave.n}"
-            )
+        check_arbitrary_length(wave.n, self._caps)
         self._arb[slot] = wave
 
     def read_arbitrary(self, slot: int) -> ArbitraryWaveform:
