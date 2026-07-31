@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from hwtools.interfaces.signal_generator import SignalGenerator
 from hwtools.model.siggen import (
+    ArbAddressing,
     ArbitraryWaveform,
     ArbLength,
     SigGenCapabilities,
@@ -18,6 +19,7 @@ from hwtools.model.siggen import (
     WaveShape,
     check_arbitrary_length,
     check_within,
+    resolve_arb_sample_rate,
 )
 
 DEFAULT_CAPABILITIES = SigGenCapabilities(
@@ -39,7 +41,8 @@ class SimulatedSignalGenerator(SignalGenerator):
     def __init__(self, *, capabilities: SigGenCapabilities = DEFAULT_CAPABILITIES) -> None:
         self._caps = capabilities
         self._channels: dict[SigGenChannel, SignalGeneratorConfig] = {}
-        self._arb: dict[int, ArbitraryWaveform] = {}
+        self._arb: dict[int, ArbitraryWaveform] = {}  # SLOT storage: slot -> waveform
+        self._volatile: dict[SigGenChannel, ArbitraryWaveform] = {}  # VOLATILE: channel -> buffer
         self._phase_deg = 0.0
         self._connected = False
 
@@ -71,21 +74,50 @@ class SimulatedSignalGenerator(SignalGenerator):
             raise ValueError("phase must be within 0..360 degrees")
         self._phase_deg = degrees
 
-    def upload_arbitrary(self, slot: int, wave: ArbitraryWaveform) -> None:
-        self._check_slot(slot)
+    def upload_arbitrary(
+        self,
+        channel: SigGenChannel,
+        wave: ArbitraryWaveform,
+        *,
+        sample_rate_hz: float | None = None,
+        slot: int | None = None,
+    ) -> None:
         check_arbitrary_length(wave.n, self._caps)
-        self._arb[slot] = wave
+        # Called for its validation, not its value: the rate has no effect on a stored
+        # buffer, but a rate this profile cannot accept must still be refused so the sim
+        # holds callers to the same contract a real instrument does.
+        resolve_arb_sample_rate(sample_rate_hz, self._caps)
+        if self._caps.arb_addressing is ArbAddressing.VOLATILE:
+            self._reject_slot(slot)
+            self._volatile[channel] = wave
+        else:
+            self._arb[self._require_slot(slot)] = wave
 
-    def read_arbitrary(self, slot: int) -> ArbitraryWaveform:
-        self._check_slot(slot)
-        wave = self._arb.get(slot)
+    def read_arbitrary(
+        self, channel: SigGenChannel, *, slot: int | None = None
+    ) -> ArbitraryWaveform:
+        if self._caps.arb_addressing is ArbAddressing.VOLATILE:
+            self._reject_slot(slot)
+            wave = self._volatile.get(channel)
+            if wave is None:
+                raise RuntimeError(f"channel {channel} has no volatile arbitrary waveform")
+            return wave
+        wave = self._arb.get(self._require_slot(slot))
         if wave is None:
             raise RuntimeError(f"arbitrary slot {slot} is empty")
         return wave
 
-    def _check_slot(self, slot: int) -> None:
+    def _require_slot(self, slot: int | None) -> int:
+        if slot is None:
+            raise ValueError(f"this instrument needs a slot=1..{self._caps.arb_slots}")
         if not 1 <= slot <= self._caps.arb_slots:
             raise ValueError(f"arbitrary slot must be 1..{self._caps.arb_slots}; got {slot}")
+        return slot
+
+    @staticmethod
+    def _reject_slot(slot: int | None) -> None:
+        if slot is not None:
+            raise ValueError("volatile addressing takes no slot; pass slot=None")
 
     def read_channel(self, channel: SigGenChannel) -> SignalGeneratorConfig:
         config = self._channels.get(channel)

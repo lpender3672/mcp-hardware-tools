@@ -18,18 +18,22 @@ from hwtools.drivers.simulated import SimulatedSignalGenerator
 from hwtools.drivers.simulated.signal_generator import DEFAULT_CAPABILITIES
 from hwtools.interfaces.signal_generator import SignalGenerator
 from hwtools.model.siggen import (
+    ArbAddressing,
     ArbitraryWaveform,
     ArbLength,
+    ArbSampleRate,
     PlaybackMode,
     SigGenChannel,
     SignalGeneratorConfig,
     WaveShape,
+    arb_repetition_hz,
 )
 
 # A simulated *variable-length, deep-memory* generator — DG1000Z-shaped: 8..16384
-# points per upload, 14-bit codes, burst-capable. Running the whole contract against
-# this alongside the fixed-length JDS6600 profile proves the abstraction spans both
-# device families in CI, before any Rigol hardware is on the bench.
+# points per channel-volatile buffer, 14-bit codes, burst-capable. Running the whole
+# contract against this alongside the fixed-length, slot-addressed JDS6600 profile
+# proves the abstraction spans both device families in CI, before any Rigol hardware
+# is on the bench.
 _VARIABLE_ARB_PROFILE = DEFAULT_CAPABILITIES.model_copy(
     update={
         "model_name": "SimulatedVariableAWG",
@@ -37,8 +41,13 @@ _VARIABLE_ARB_PROFILE = DEFAULT_CAPABILITIES.model_copy(
         "playback_modes": frozenset(
             {PlaybackMode.CONTINUOUS, PlaybackMode.BURST, PlaybackMode.SWEEP}
         ),
+        "arb_addressing": ArbAddressing.VOLATILE,
+        "arb_slots": 0,  # volatile: one live buffer per channel, no numbered bank
         "arb_length": ArbLength(min_points=8, max_points=16384),
         "arb_code_levels": 16384,
+        # Sample-rate-clocked playback, like the DG1000Z in SRATe mode, so the rate
+        # branch of the contract runs in CI and not only against the bench.
+        "arb_sample_rate": ArbSampleRate(min_hz=1e-6, max_hz=60e6, default_hz=20e6),
     }
 )
 
@@ -48,9 +57,15 @@ _VARIABLE_ARB_PROFILE = DEFAULT_CAPABILITIES.model_copy(
         pytest.param("sim", id="simulated"),
         pytest.param("sim_awg", id="simulated-variable-awg"),
         pytest.param("real", id="jds6600", marks=pytest.mark.hardware),
+        pytest.param("real_dg1062", id="dg1062", marks=pytest.mark.hardware),
     ]
 )
 def generator(request: pytest.FixtureRequest) -> Iterator[SignalGenerator]:
+    if request.param == "real_dg1062":
+        # Reuse the session-scoped VISA link (conftest.live_dg1062) rather than
+        # reconnecting per test: this DG1062Z wedges under connect/disconnect churn.
+        yield request.getfixturevalue("live_dg1062")
+        return
     instrument: SignalGenerator
     if request.param == "sim":
         instrument = SimulatedSignalGenerator()
@@ -134,10 +149,70 @@ def test_arbitrary_upload_read_round_trips(generator: SignalGenerator) -> None:
     assert caps.arb_length is not None  # narrowed by supports_arbitrary()
     n = caps.arb_length.representative_length()
     ramp = tuple(-1.0 + 2.0 * i / (n - 1) for i in range(n))  # one-period sawtooth
-    slot = caps.arb_slots  # highest slot, to avoid clobbering low front-panel presets
-    generator.upload_arbitrary(slot, ArbitraryWaveform(samples=ramp))
-    read = generator.read_arbitrary(slot)
+    wave = ArbitraryWaveform(samples=ramp)
+    channel = SigGenChannel.CH1
+    if caps.arb_addressing is ArbAddressing.SLOT:
+        slot = caps.arb_slots  # highest slot, to avoid clobbering low front-panel presets
+        generator.upload_arbitrary(channel, wave, slot=slot)
+        read = generator.read_arbitrary(channel, slot=slot)
+    else:  # VOLATILE: one live buffer per channel, no slot
+        generator.upload_arbitrary(channel, wave)
+        read = generator.read_arbitrary(channel)
     assert read.n == n
     # Round-trip is exact on the sim, ±1 LSB on real 12-bit hardware.
     tol = 2.0 / (caps.arb_code_levels - 1) if caps.arb_code_levels else 1e-9
     assert read.samples == pytest.approx(ramp, abs=tol)
+
+
+def test_arbitrary_sample_rate_matches_what_caps_advertise(generator: SignalGenerator) -> None:
+    """A playback rate is accepted only where the instrument has one, and refused —
+    not ignored — where it does not. Either way the caller learns the truth."""
+    caps = generator.capabilities
+    if not caps.supports_arbitrary():
+        pytest.skip("no arbitrary-waveform support")
+    assert caps.arb_length is not None
+    n = caps.arb_length.representative_length()
+    wave = ArbitraryWaveform(samples=tuple(-1.0 + 2.0 * i / (n - 1) for i in range(n)))
+    channel = SigGenChannel.CH1
+    slot = caps.arb_slots if caps.arb_addressing is ArbAddressing.SLOT else None
+
+    if caps.arb_sample_rate is None:
+        with pytest.raises(ValueError):
+            generator.upload_arbitrary(channel, wave, sample_rate_hz=1e6, slot=slot)
+        return
+    rate = caps.arb_sample_rate.default_hz
+    generator.upload_arbitrary(channel, wave, sample_rate_hz=rate, slot=slot)
+    # The buffer is one period, so its repetition frequency follows from rate/points.
+    assert arb_repetition_hz(rate, n) == pytest.approx(rate / n)
+    with pytest.raises(ValueError):  # above the advertised ceiling
+        generator.upload_arbitrary(
+            channel, wave, sample_rate_hz=caps.arb_sample_rate.max_hz * 10.0, slot=slot
+        )
+
+
+def test_configure_after_arbitrary_upload_restores_a_builtin(
+    generator: SignalGenerator,
+) -> None:
+    """Swapping back to a built-in waveform after an arbitrary upload must actually
+    take — the transition that fails when a driver leaves the channel in its
+    arbitrary output mode, where frequency writes are ignored."""
+    caps = generator.capabilities
+    if not caps.supports_arbitrary():
+        pytest.skip("no arbitrary-waveform support")
+    assert caps.arb_length is not None
+    n = caps.arb_length.representative_length()
+    wave = ArbitraryWaveform(samples=tuple(-1.0 + 2.0 * i / (n - 1) for i in range(n)))
+    slot = caps.arb_slots if caps.arb_addressing is ArbAddressing.SLOT else None
+    generator.upload_arbitrary(SigGenChannel.CH1, wave, slot=slot)
+
+    generator.configure_channel(
+        SignalGeneratorConfig(
+            channel=SigGenChannel.CH1,
+            waveform=WaveShape.SINE,
+            frequency_hz=2_000.0,
+            amplitude_vpp=1.0,
+        )
+    )
+    read = generator.read_channel(SigGenChannel.CH1)
+    assert read.waveform is WaveShape.SINE
+    assert read.frequency_hz == pytest.approx(2_000.0, rel=1e-3)

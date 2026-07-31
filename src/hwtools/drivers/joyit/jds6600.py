@@ -32,6 +32,7 @@ import numpy as np
 
 from hwtools.interfaces.signal_generator import SignalGenerator
 from hwtools.model.siggen import (
+    ArbAddressing,
     ArbitraryWaveform,
     ArbLength,
     PlaybackMode,
@@ -41,6 +42,7 @@ from hwtools.model.siggen import (
     WaveShape,
     check_arbitrary_length,
     check_within,
+    resolve_arb_sample_rate,
 )
 
 # CH340 USB-serial bridge the JDS6600 enumerates behind. NOTE: the CH340 is a
@@ -92,6 +94,7 @@ _CAPABILITIES = SigGenCapabilities(
     max_offset_v=9.99,
     waveforms=tuple(_SHAPE_CODE),
     playback_modes=frozenset({PlaybackMode.CONTINUOUS}),  # pure DDS: continuous loop only
+    arb_addressing=ArbAddressing.SLOT,  # 60 device-global numbered slots
     arb_slots=_ARB_SLOTS,
     arb_length=ArbLength.fixed(_ARB_POINTS),  # fixed 2048-point DDS wavetable
     arb_code_levels=_ARB_CODE_LEVELS,
@@ -225,16 +228,30 @@ class JDS6600(SignalGenerator):
 
     # -- arbitrary waveforms --------------------------------------------------
 
-    def upload_arbitrary(self, slot: int, wave: ArbitraryWaveform) -> None:
-        self._check_slot(slot)
+    def upload_arbitrary(
+        self,
+        channel: SigGenChannel,
+        wave: ArbitraryWaveform,
+        *,
+        sample_rate_hz: float | None = None,
+        slot: int | None = None,
+    ) -> None:
+        # SLOT-addressed: slots are device-global, so `channel` is unused here; a
+        # channel selects a slot for output via SignalGeneratorConfig.arb_slot.
+        slot = self._require_slot(slot)
         check_arbitrary_length(wave.n, _CAPABILITIES)
+        # A DDS wavetable: the slot plays at the channel's configured frequency, so
+        # there is no playback clock to set. Refuses a rate rather than ignoring it.
+        resolve_arb_sample_rate(sample_rate_hz, _CAPABILITIES)
         codes = np.rint((wave.samples + 1.0) / 2.0 * _ARB_CODE_MAX).astype(np.int64)
         reply = self._command("a", slot, ",".join(map(str, codes.tolist())))
         if reply.lstrip(":").lower() != "ok":
             raise RuntimeError(f"arbitrary upload to slot {slot} rejected: {reply!r}")
 
-    def read_arbitrary(self, slot: int) -> ArbitraryWaveform:
-        self._check_slot(slot)
+    def read_arbitrary(
+        self, channel: SigGenChannel, *, slot: int | None = None
+    ) -> ArbitraryWaveform:
+        slot = self._require_slot(slot)
         reply = self._command("b", slot, "0")
         prefix = f":b{slot:02d}="
         if not reply.startswith(prefix):
@@ -243,6 +260,15 @@ class JDS6600(SignalGenerator):
             [int(x) for x in reply[len(prefix) :].rstrip(".").split(",") if x], dtype=np.float64
         )
         return ArbitraryWaveform(samples=codes / _ARB_CODE_MAX * 2.0 - 1.0)
+
+    def _require_slot(self, slot: int | None) -> int:
+        if slot is None:
+            raise ValueError(
+                f"the JDS6600 addresses arbitrary waveforms by global slot; "
+                f"pass slot=1..{_ARB_SLOTS}"
+            )
+        self._check_slot(slot)
+        return slot
 
     def _check_slot(self, slot: int) -> None:
         if not 1 <= slot <= _ARB_SLOTS:
