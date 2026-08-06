@@ -121,11 +121,13 @@ def test_arbitrary_upload_read_back_on_metal(generator: JDS6600) -> None:
     """The `a`/`b` codec round-trips a real 2048-point buffer through the device to
     within one 12-bit LSB — the driver-layer proof of the upload path."""
     caps = generator.capabilities
+    assert caps.arb_length is not None
     slot = caps.arb_slots  # highest slot, to avoid clobbering low front-panel presets
-    wave = analytic_arbitrary(WaveShape.TRIANGLE, points=caps.arb_points)
-    generator.upload_arbitrary(slot, wave)
-    read = generator.read_arbitrary(slot)
-    assert read.n == caps.arb_points
+    n = caps.arb_length.representative_length()
+    wave = analytic_arbitrary(WaveShape.TRIANGLE, points=n)
+    generator.upload_arbitrary(CH1, wave, slot=slot)
+    read = generator.read_arbitrary(CH1, slot=slot)
+    assert read.n == n
     assert read.samples == pytest.approx(wave.samples, abs=2 / (caps.arb_code_levels - 1))
 
 
@@ -133,8 +135,10 @@ def test_arbitrary_upload_read_back_on_metal(generator: JDS6600) -> None:
 def test_arb_slot_selection_reads_back(generator: JDS6600) -> None:
     """Selecting an arb slot round-trips through the waveform code (100 + slot)."""
     caps = generator.capabilities
+    assert caps.arb_length is not None
     slot = caps.arb_slots
-    generator.upload_arbitrary(slot, analytic_arbitrary(WaveShape.SINE, points=caps.arb_points))
+    n = caps.arb_length.representative_length()
+    generator.upload_arbitrary(CH1, analytic_arbitrary(WaveShape.SINE, points=n), slot=slot)
     generator.configure_channel(
         SignalGeneratorConfig(
             channel=CH1, frequency_hz=1_000.0, amplitude_vpp=2.0, arb_slot=slot

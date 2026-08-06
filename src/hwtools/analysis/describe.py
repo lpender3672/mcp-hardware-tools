@@ -161,17 +161,7 @@ def describe(
 
 def _dominant_tone(wf: Waveform) -> tuple[float | None, float]:
     """(peak frequency, prominence over the spectral median), or (None, 0)."""
-    if wf.n < 8 or wf.vpp <= 0:
-        return None, 0.0
-    spec = spectrum.amplitude_spectrum(wf)
-    values = spec.values.copy()
-    if values.size < 3:
-        return None, 0.0
-    values[0] = 0.0  # ignore DC
-    idx = int(np.argmax(values))
-    median = float(np.median(values))
-    prominence = float(values[idx] / median) if median > 0 else 0.0
-    return spectrum.peak_frequency(wf), prominence
+    return spectrum.peak_frequency_and_prominence(wf)
 
 
 def _periodicity(wf: Waveform) -> tuple[float, float | None]:

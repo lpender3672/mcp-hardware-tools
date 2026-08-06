@@ -26,6 +26,7 @@ from collections.abc import Iterator
 import pytest
 
 from hwtools.drivers.joyit import JDS6600, find_jds6600_port
+from hwtools.drivers.rigol import DG1062
 from hwtools.drivers.rigol.ds1054z import DS1054Z
 from hwtools.drivers.rp2350 import SerialHarness, find_pico_port
 from hwtools.model.siggen import SigGenChannel, SignalGeneratorConfig, WaveShape
@@ -96,5 +97,24 @@ def generator(live_generator: JDS6600) -> Iterator[JDS6600]:
                 waveform=WaveShape.SINE,
                 frequency_hz=1_000.0,
                 amplitude_vpp=2.0,
+            )
+        )
+
+
+@pytest.fixture
+def dg1062(live_dg1062: DG1062) -> Iterator[DG1062]:
+    """The live DG1062Z, both outputs disabled and CH1 left benign after each test."""
+    try:
+        yield live_dg1062
+    finally:
+        live_dg1062._t.write("*CLS")  # clear any error a test provoked, before restoring
+        live_dg1062.enable_output(SigGenChannel.CH2, False)
+        live_dg1062.configure_channel(
+            SignalGeneratorConfig(
+                channel=SigGenChannel.CH1,
+                waveform=WaveShape.SINE,
+                frequency_hz=1_000.0,
+                amplitude_vpp=2.0,
+                enabled=False,
             )
         )
