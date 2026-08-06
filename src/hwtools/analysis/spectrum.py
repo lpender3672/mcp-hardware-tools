@@ -110,6 +110,45 @@ def welch_psd(
     )
 
 
+def complex_tone(wf: Waveform, frequency_hz: float, *, window: str = DEFAULT_WINDOW) -> complex:
+    """The complex amplitude ``A * exp(1j*phase)`` of a *known* frequency in ``wf``.
+
+    Every other function here finds a frequency by searching a bin grid, which is
+    right when the frequency is unknown but throws away phase (``amplitude_spectrum``)
+    or only recovers it to within a bin's leakage skirt. When the frequency is
+    externally known instead — set on a generator, not discovered — direct
+    quadrature demodulation (a single-frequency DTFT, the lock-in-amplifier
+    technique) is both simpler and exact for it: ``coeff = 2 * <x(t) * e^-j*w*t>``
+    recovers ``A*exp(1j*phase)`` for ``x(t) = A*cos(w*t + phase)`` to the extent the
+    record spans many cycles (the cross term at ``2*frequency_hz`` averages toward
+    zero). The phase reference is ``wf.time_axis()``, i.e. the capture's own
+    ``t0_s`` — meaningless in isolation (it depends on when the scope happened to
+    trigger), but directly comparable between two channels from the *same*
+    multi-channel acquisition, which share that origin exactly. That is what makes
+    a phase-sensitive measurement (e.g. impedance from a drive/response pair)
+    possible without a dedicated phase-reference instrument.
+
+    A window is applied even though nothing can leak *into* an exactly-known
+    frequency the way it leaks into a bin: broadband noise at other frequencies
+    still leaks in less through a tapered record than a hard-edged rectangle, and
+    the coherent-gain normalisation (dividing by ``sum(window)`` rather than ``N``)
+    keeps the amplitude scaling exact regardless.
+    """
+    if frequency_hz <= 0:
+        raise ValueError("frequency_hz must be positive")
+    if frequency_hz >= wf.sample_rate_hz / 2.0:
+        raise ValueError(
+            f"frequency_hz ({frequency_hz:g} Hz) must be below Nyquist "
+            f"({wf.sample_rate_hz / 2.0:g} Hz) or the estimate aliases"
+        )
+    n = wf.n
+    if n < 2:
+        raise ValueError("need at least 2 samples")
+    w = sps.get_window(window, n)
+    phasor = np.exp(-1j * 2.0 * np.pi * frequency_hz * wf.time_axis())
+    return complex(2.0 * np.sum(wf.samples * w * phasor) / np.sum(w))
+
+
 def harmonic_amplitudes(
     wf: Waveform,
     fundamental_hz: float,

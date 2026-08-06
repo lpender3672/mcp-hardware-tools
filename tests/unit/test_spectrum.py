@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import cmath
+
 import numpy as np
 import pytest
 
@@ -48,6 +50,36 @@ def test_psd_has_density_units_and_finds_the_tone() -> None:
     peak = spec.peak()
     assert peak is not None
     assert peak[0] == pytest.approx(10_000.0, rel=1e-2)
+
+
+# -- phase-coherent single-frequency detection ---------------------------------
+
+
+def _phased_tone(amp_v: float, freq_hz: float, phase_rad: float, *, t0_s: float = 0.0) -> Waveform:
+    fs, n = 1e6, 100_000  # 1000 cycles at 1 kHz: the 2f cross term averages out tightly
+    t = t0_s + np.arange(n) / fs
+    samples = amp_v * np.cos(2 * np.pi * freq_hz * t + phase_rad)
+    return Waveform(channel=ChannelId.CH1, samples=samples, t0_s=t0_s, dt_s=1.0 / fs)
+
+
+def test_complex_tone_recovers_amplitude_and_phase() -> None:
+    coeff = spectrum.complex_tone(_phased_tone(1.7, 1_000.0, 0.9), 1_000.0)
+    assert abs(coeff) == pytest.approx(1.7, rel=1e-3)
+    assert cmath.phase(coeff) == pytest.approx(0.9, abs=1e-3)
+
+
+def test_complex_tone_phase_difference_is_origin_independent() -> None:
+    # Two "channels" of one acquisition (same t0) at different phases: what a
+    # V/I impedance measurement actually needs is their *difference*.
+    v = spectrum.complex_tone(_phased_tone(1.0, 5_000.0, 0.0), 5_000.0)
+    i = spectrum.complex_tone(_phased_tone(1.0, 5_000.0, -0.4), 5_000.0)
+    assert (cmath.phase(v) - cmath.phase(i)) == pytest.approx(0.4, abs=1e-3)
+
+
+def test_complex_tone_rejects_frequency_at_or_above_nyquist() -> None:
+    wf = _tone(1.0, 10_000.0, fs=1e6, n=1024)
+    with pytest.raises(ValueError, match="Nyquist"):
+        spectrum.complex_tone(wf, 500_000.0)
 
 
 # -- harmonic content ---------------------------------------------------------
