@@ -394,6 +394,21 @@ class DG1062(ScpiTransportMixin, SignalGenerator):
         self._t.write(f":SOUR2:PHASe {_num(degrees)}")
         self._t.write(":SOUR1:PHASe:SYNChronize")
 
+    def set_frequency(self, channel: SigGenChannel, frequency_hz: float) -> None:
+        """Retune a channel already playing a built-in waveform, output left on.
+
+        :meth:`configure_channel` restarts the output stage around every write (see
+        :data:`_OUTPUT_SETTLE_S`) — needed to leave arbitrary mode, but ~0.5 s per
+        call. Stepping a sine through a frequency list needs none of that: a bare
+        ``:FREQuency`` write on a basic waveform takes effect directly. Call
+        :meth:`set_phase_deg` afterwards if two channels must stay phase-aligned.
+        """
+        lo, hi = _CAPABILITIES.min_frequency_hz, _CAPABILITIES.max_frequency_hz
+        if not lo <= frequency_hz <= hi:
+            raise ValueError(f"frequency {frequency_hz} Hz outside {lo}..{hi} Hz")
+        self._t.write(f":SOUR{int(channel)}:FREQuency {_num(frequency_hz)}")
+        self._check_error()
+
     # -- arbitrary waveforms --------------------------------------------------
 
     def upload_arbitrary(

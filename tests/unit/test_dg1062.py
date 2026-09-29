@@ -327,6 +327,14 @@ def test_set_phase_offsets_ch2_and_aligns() -> None:
         gen.set_phase_deg(361.0)
 
 
+def test_set_frequency_writes_bare_frequency_without_output_restart() -> None:
+    gen, fake = _gen()
+    gen.set_frequency(SigGenChannel.CH2, 1_234_567.0)
+    assert fake.log == [":SOUR2:FREQuency 1234567.0", ":SYSTem:ERRor?"]
+    with pytest.raises(ValueError, match="outside"):
+        gen.set_frequency(SigGenChannel.CH1, 1e9)
+
+
 # -- readback ----------------------------------------------------------------------
 
 
