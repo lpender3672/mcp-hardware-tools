@@ -50,4 +50,4 @@ def analytic_arbitrary(
             raise ValueError("duty must be within (0, 1)")
         y = np.where(phase < duty, 1.0, -1.0)
     y = np.clip(y, -1.0, 1.0)  # guard tiny FP overshoot against the [-1, 1] validator
-    return ArbitraryWaveform(samples=tuple(float(v) for v in y))
+    return ArbitraryWaveform(samples=y)

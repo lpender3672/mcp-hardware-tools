@@ -10,6 +10,16 @@ from __future__ import annotations
 from collections.abc import Callable
 
 
+def encode_definite_block(payload: bytes) -> bytes:
+    """Frame ``payload`` as a definite-length block: ``#<ndigits><length><payload>``.
+
+    The inverse of :func:`decode_definite_block`, used when *sending* binary data
+    (e.g. a Rigol ``DATA:DAC16`` arbitrary-waveform download).
+    """
+    length = str(len(payload)).encode("ascii")
+    return b"#" + str(len(length)).encode("ascii") + length + payload
+
+
 def decode_definite_block(raw: bytes) -> bytes:
     """Extract the payload from a complete definite-length block in ``raw``."""
     if not raw.startswith(b"#"):

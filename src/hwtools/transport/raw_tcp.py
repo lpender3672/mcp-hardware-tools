@@ -11,7 +11,7 @@ from __future__ import annotations
 import socket
 
 from hwtools.transport.base import Transport
-from hwtools.transport.block import read_definite_block
+from hwtools.transport.block import encode_definite_block, read_definite_block
 
 RIGOL_RAW_PORT = 5555
 
@@ -54,6 +54,11 @@ class RawTcpTransport(Transport):
         payload = read_definite_block(self._recv_exact)
         self._recv_line()  # consume the trailing newline after the block
         return payload
+
+    def write_block(self, command: str, payload: bytes) -> None:
+        self._connected.sendall(
+            command.encode("ascii") + encode_definite_block(payload) + b"\n"
+        )
 
     def _recv_exact(self, n: int) -> bytes:
         chunks: list[bytes] = []

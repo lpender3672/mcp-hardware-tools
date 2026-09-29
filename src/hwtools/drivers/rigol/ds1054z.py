@@ -16,6 +16,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
+from hwtools.drivers.rigol._scpi import ScpiTransportMixin
 from hwtools.interfaces.oscilloscope import Oscilloscope
 from hwtools.model.acquire import AcquireConfig
 from hwtools.model.capability import ScopeCapabilities
@@ -26,8 +27,6 @@ from hwtools.model.timebase import TimebaseConfig
 from hwtools.model.trigger import TriggerConfig
 from hwtools.model.waveform import Waveform
 from hwtools.transport.base import Transport
-from hwtools.transport.raw_tcp import RIGOL_RAW_PORT, RawTcpTransport
-from hwtools.transport.visa import VisaTransport
 
 _SLOPE = {Slope.RISING: "POSitive", Slope.FALLING: "NEGative", Slope.EITHER: "RFALl"}
 _SWEEP = {SweepMode.AUTO: "AUTO", SweepMode.NORMAL: "NORMal", SweepMode.SINGLE: "SINGle"}
@@ -76,37 +75,23 @@ _CAPABILITIES = ScopeCapabilities(
 )
 
 
-class DS1054Z(Oscilloscope):
-    """Driver for the Rigol DS1054Z over any :class:`Transport`."""
+class DS1054Z(ScpiTransportMixin, Oscilloscope):
+    """Driver for the Rigol DS1054Z over any :class:`Transport`.
+
+    Connection plumbing (``over_tcp``/``over_visa``/``connect``/``disconnect``/
+    ``idn``) comes from :class:`ScpiTransportMixin`; this class holds only the
+    DS1000Z command set.
+    """
 
     def __init__(self, transport: Transport) -> None:
-        self._t = transport
+        super().__init__(transport)
         # Effective (clamped) per-channel vertical config we last applied, so the
         # trigger level can be clamped to the source channel's on-screen range.
         self._channels: dict[ChannelId, ChannelConfig] = {}
 
-    @classmethod
-    def over_tcp(cls, host: str, port: int = RIGOL_RAW_PORT) -> DS1054Z:
-        """Build a driver using the fast raw SCPI socket."""
-        return cls(RawTcpTransport(host, port))
-
-    @classmethod
-    def over_visa(cls, resource: str) -> DS1054Z:
-        """Build a driver using a pyvisa resource string."""
-        return cls(VisaTransport(resource))
-
     @property
     def capabilities(self) -> ScopeCapabilities:
         return _CAPABILITIES
-
-    def connect(self) -> None:
-        self._t.open()
-
-    def disconnect(self) -> None:
-        self._t.close()
-
-    def idn(self) -> str:
-        return self._t.query("*IDN?")
 
     # -- configuration --------------------------------------------------------
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from hwtools.transport.base import Transport
-from hwtools.transport.block import decode_definite_block
+from hwtools.transport.block import decode_definite_block, encode_definite_block
 
 if TYPE_CHECKING:
     import pyvisa
@@ -55,3 +55,6 @@ class VisaTransport(Transport):
     def query_block(self, command: str) -> bytes:
         self._connected.write(command)
         return decode_definite_block(self._connected.read_raw())
+
+    def write_block(self, command: str, payload: bytes) -> None:
+        self._connected.write_raw(command.encode("ascii") + encode_definite_block(payload))

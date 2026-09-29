@@ -42,6 +42,15 @@ class Transport(ABC):
         newline are stripped by the transport.
         """
 
+    @abstractmethod
+    def write_block(self, command: str, payload: bytes) -> None:
+        """Send ``command`` immediately followed by ``payload`` as an IEEE 488.2
+        definite-length block.
+
+        The transport frames the ``#<n><len>`` header around ``payload`` (the inverse
+        of :meth:`query_block`), so the caller passes the raw bytes. Used to download
+        binary waveform data (e.g. a Rigol ``DATA:DAC16`` arbitrary upload)."""
+
     def __enter__(self) -> Self:
         self.open()
         return self

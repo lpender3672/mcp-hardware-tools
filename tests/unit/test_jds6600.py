@@ -248,7 +248,8 @@ def test_upload_arbitrary_encodes_12bit_csv() -> None:
     fake = FakeSerial([":ok"])
     gen = JDS6600.from_serial(fake)
     gen.connect()
-    gen.upload_arbitrary(5, ArbitraryWaveform(samples=_pad([-1.0, 0.0, 1.0])))
+    wave = ArbitraryWaveform(samples=_pad([-1.0, 0.0, 1.0]))
+    gen.upload_arbitrary(SigGenChannel.CH1, wave, slot=5)
     cmd = fake.commands[0]
     assert cmd.startswith(":a05=0,2048,4095,")  # -1 -> 0, 0 -> mid, +1 -> full scale
     assert cmd.endswith(".")
@@ -261,7 +262,7 @@ def test_read_arbitrary_decodes_to_unit_range() -> None:
     reply = ":b07=" + ",".join(str(c) for c in codes) + "."
     gen = JDS6600.from_serial(FakeSerial([reply]))
     gen.connect()
-    wave = gen.read_arbitrary(7)
+    wave = gen.read_arbitrary(SigGenChannel.CH1, slot=7)
     assert wave.n == _ARB_POINTS
     assert wave.samples[0] == pytest.approx(-1.0, abs=1e-3)
     assert wave.samples[1] == pytest.approx(0.0, abs=1e-3)
@@ -273,12 +274,12 @@ def test_upload_read_round_trips_through_the_codec() -> None:
     upload = FakeSerial([":ok"])
     gen = JDS6600.from_serial(upload)
     gen.connect()
-    gen.upload_arbitrary(3, ArbitraryWaveform(samples=ramp))
+    gen.upload_arbitrary(SigGenChannel.CH1, ArbitraryWaveform(samples=ramp), slot=3)
     # Feed the exact codes it wrote back as a `b` reply and decode them.
     written = upload.commands[0].split("=", 1)[1].rstrip(".")
     gen2 = JDS6600.from_serial(FakeSerial([f":b03={written}."]))
     gen2.connect()
-    read = gen2.read_arbitrary(3)
+    read = gen2.read_arbitrary(SigGenChannel.CH1, slot=3)
     assert read.samples == pytest.approx(ramp, abs=2 / 4095)  # within one 12-bit LSB
 
 
@@ -286,16 +287,24 @@ def test_upload_wrong_point_count_raises() -> None:
     gen = JDS6600.from_serial(FakeSerial([]))
     gen.connect()
     with pytest.raises(ValueError, match="2048"):
-        gen.upload_arbitrary(1, ArbitraryWaveform(samples=(0.0, 0.5, -0.5)))
+        gen.upload_arbitrary(SigGenChannel.CH1, ArbitraryWaveform(samples=(0.0, 0.5, -0.5)), slot=1)
 
 
 def test_arbitrary_slot_out_of_range_raises() -> None:
     gen = JDS6600.from_serial(FakeSerial([]))
     gen.connect()
     with pytest.raises(ValueError, match="slot"):
-        gen.read_arbitrary(61)
+        gen.read_arbitrary(SigGenChannel.CH1, slot=61)
     with pytest.raises(ValueError, match="slot"):
-        gen.read_arbitrary(0)
+        gen.read_arbitrary(SigGenChannel.CH1, slot=0)
+
+
+def test_arbitrary_requires_a_slot() -> None:
+    # SLOT-addressed: omitting the slot is a loud error, not an implicit default.
+    gen = JDS6600.from_serial(FakeSerial([]))
+    gen.connect()
+    with pytest.raises(ValueError, match="global slot"):
+        gen.read_arbitrary(SigGenChannel.CH1)
 
 
 def test_arbitrary_waveform_rejects_out_of_unit_range() -> None:

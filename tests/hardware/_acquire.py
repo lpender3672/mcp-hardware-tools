@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 
-from hwtools.drivers.rigol.ds1054z import DS1054Z
+from hwtools.interfaces.oscilloscope import Oscilloscope
 from hwtools.model.capture import Capture
 from hwtools.model.ids import ChannelId, TriggerStatus
 from hwtools.model.timebase import TimebaseConfig
@@ -27,11 +27,11 @@ _SETTLE_LATENCY_S = 0.02
 _POLL_S = 0.02
 
 
-def _window_s(scope: DS1054Z, timebase: TimebaseConfig) -> float:
+def _window_s(scope: Oscilloscope, timebase: TimebaseConfig) -> float:
     return scope.capabilities.horizontal_divisions * timebase.scale_s_per_div
 
 
-def _wait_until(scope: DS1054Z, states: tuple[TriggerStatus, ...], timeout_s: float) -> bool:
+def _wait_until(scope: Oscilloscope, states: tuple[TriggerStatus, ...], timeout_s: float) -> bool:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         if scope.trigger_status() in states:
@@ -41,7 +41,7 @@ def _wait_until(scope: DS1054Z, states: tuple[TriggerStatus, ...], timeout_s: fl
 
 
 def acquire_one_shot(
-    scope: DS1054Z, channels: Sequence[ChannelId], timebase: TimebaseConfig
+    scope: Oscilloscope, channels: Sequence[ChannelId], timebase: TimebaseConfig
 ) -> Capture:
     """Arm SINGLE, wait for the trigger (timeout ~2 windows), deep-read one frame.
 
@@ -49,7 +49,15 @@ def acquire_one_shot(
     frame. Raises :class:`TimeoutError` if the trigger never fires; never forces.
     """
     scope.single()
-    _wait_until(scope, _ARMED, _ARM_TIMEOUT_S)
+    # The arm must be confirmed, not assumed. STOP counts as "captured", and a scope
+    # left in STOP by the previous single-shot satisfies the trigger wait below
+    # instantly — returning the *previous* frame as though it were fresh. Failing here
+    # turns that silent staleness into a visible error.
+    if not _wait_until(scope, _ARMED, _ARM_TIMEOUT_S):
+        raise TimeoutError(
+            f"scope did not arm within {_ARM_TIMEOUT_S:g}s of :SINGle "
+            f"(status {scope.trigger_status()}); a capture now would return a stale frame"
+        )
     timeout_s = _TRIGGER_TIMEOUT_S + _FILL_WINDOWS * _window_s(scope, timebase)
     if not _wait_until(scope, _CAPTURED, timeout_s):
         raise TimeoutError("single acquisition did not trigger within the budget")
@@ -57,7 +65,11 @@ def acquire_one_shot(
 
 
 def acquire_repeating(
-    scope: DS1054Z, channels: Sequence[ChannelId], timebase: TimebaseConfig, *, deep: bool = False
+    scope: Oscilloscope,
+    channels: Sequence[ChannelId],
+    timebase: TimebaseConfig,
+    *,
+    deep: bool = False,
 ) -> Capture:
     """Free-run (AUTO sweep) and read a fresh frame of a persistent signal.
 

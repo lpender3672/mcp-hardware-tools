@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from scipy import signal as sps
 
-from hwtools.analysis.spectrum import psd_slope_db_per_decade
+from hwtools.analysis.spectrum import psd_slope_db_per_decade, welch_psd
 from hwtools.model.ids import ChannelId
 from hwtools.model.siggen import ArbitraryWaveform
 from hwtools.model.waveform import Waveform
@@ -48,7 +47,8 @@ def test_sigma_scales_the_rms() -> None:
 def test_band_limited_lowpass_attenuates_above_cutoff() -> None:
     x = white_noise(_N, seed=1)
     y = band_limited(x, fs=1000.0, high_hz=100.0)
-    freqs, psd = sps.welch(y, fs=1000.0, nperseg=4096)
+    spec = welch_psd(_as_waveform(y, fs=1000.0), nperseg=4096)
+    freqs, psd = spec.frequencies_hz, spec.values
     passband = psd[freqs < 80.0].mean()
     stopband = psd[freqs > 200.0].mean()
     assert stopband < passband * 1e-3  # well attenuated beyond the cutoff

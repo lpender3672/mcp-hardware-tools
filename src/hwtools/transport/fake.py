@@ -22,6 +22,7 @@ class FakeTransport(Transport):
         self._queries = queries or {}
         self._blocks = blocks or {}
         self.log: list[str] = []
+        self.written_blocks: list[tuple[str, bytes]] = []  # (command, payload) for write_block
         self.opened = False
 
     def open(self) -> None:
@@ -44,3 +45,7 @@ class FakeTransport(Transport):
         if command not in self._blocks:
             raise KeyError(f"FakeTransport has no scripted block for {command!r}")
         return self._blocks[command]
+
+    def write_block(self, command: str, payload: bytes) -> None:
+        self.log.append(command)
+        self.written_blocks.append((command, payload))
