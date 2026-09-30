@@ -96,17 +96,16 @@ def _idn_vxi11(resource: str, timeout_s: float) -> str | None:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
+            # Only the probe's own resource is closed: the manager's session is
+            # shared, and closing it would drop every live instrument link.
             rm = pyvisa.ResourceManager("@py")
+            inst = rm.open_resource(resource, open_timeout=int(timeout_s * 1000))
             try:
-                inst = rm.open_resource(resource, open_timeout=int(timeout_s * 1000))
-                try:
-                    inst.timeout = int(timeout_s * 1000)
-                    reply: str = inst.query("*IDN?")  # type: ignore[attr-defined]
-                    return reply.strip() or None
-                finally:
-                    inst.close()
+                inst.timeout = int(timeout_s * 1000)
+                reply: str = inst.query("*IDN?")  # type: ignore[attr-defined]
+                return reply.strip() or None
             finally:
-                rm.close()
+                inst.close()
     except Exception:
         return None
 
@@ -212,11 +211,8 @@ def _broadcast_hosts(wait_s: float) -> list[str]:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            rm = pyvisa.ResourceManager("@py")
-            try:
-                resources = rm.list_resources("TCPIP?*::INSTR")
-            finally:
-                rm.close()
+            # Never closed here: the manager's session is shared with every live link.
+            resources = pyvisa.ResourceManager("@py").list_resources("TCPIP?*::INSTR")
     except Exception:
         return []
     del wait_s  # pyvisa-py's VXI-11 broadcast uses its own fixed wait
