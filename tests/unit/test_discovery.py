@@ -101,14 +101,57 @@ def test_discover_falls_back_to_sweep(
 ) -> None:
     monkeypatch.setattr(discovery, "_broadcast_hosts", lambda wait_s: [])
     found = discover_instruments(
-        timeout_s=1.0, networks=[ipaddress.IPv4Network("127.0.0.1/32")], ports=(fake_instrument,)
+        timeout_s=1.0,
+        sweep_fallback=True,
+        networks=[ipaddress.IPv4Network("127.0.0.1/32")],
+        ports=(fake_instrument,),
     )
     assert [f.serial for f in found] == ["DS1ZA123456789"]
 
 
-def test_discover_without_fallback_finds_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_discover_never_sweeps_unless_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A /24 port sweep looks like a port scan on a shared network: opt-in only.
+    def no_sweep(networks: object) -> list[str]:
+        raise AssertionError("swept without sweep_fallback=True")
+
     monkeypatch.setattr(discovery, "_broadcast_hosts", lambda wait_s: [])
-    assert discover_instruments(sweep_fallback=False) == []
+    monkeypatch.setattr(discovery, "_sweep_hosts", no_sweep)
+    assert discover_instruments() == []
+
+
+def test_skip_hosts_are_never_contacted(
+    monkeypatch: pytest.MonkeyPatch, fake_instrument: int
+) -> None:
+    # An instrument in use must not be probed: a second client on its raw socket
+    # interleaves with the owner's session.
+    monkeypatch.setattr(discovery, "_broadcast_hosts", lambda wait_s: ["127.0.0.1"])
+    probed: list[str] = []
+    real_probe = discovery.probe
+
+    def spy(address: str, **kw: object) -> FoundInstrument | None:
+        probed.append(address)
+        return real_probe(address, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(discovery, "probe", spy)
+    assert (
+        discover_instruments(timeout_s=1.0, ports=(fake_instrument,), skip_hosts={"127.0.0.1"})
+        == []
+    )
+    assert probed == []
+
+
+def test_skip_hosts_are_left_out_of_a_sweep(
+    monkeypatch: pytest.MonkeyPatch, fake_instrument: int
+) -> None:
+    monkeypatch.setattr(discovery, "_broadcast_hosts", lambda wait_s: [])
+    found = discover_instruments(
+        timeout_s=1.0,
+        sweep_fallback=True,
+        networks=[ipaddress.IPv4Network("127.0.0.1/32")],
+        ports=(fake_instrument,),
+        skip_hosts=["127.0.0.1"],
+    )
+    assert found == []
 
 
 def test_discover_dedupes_by_serial(monkeypatch: pytest.MonkeyPatch, fake_instrument: int) -> None:

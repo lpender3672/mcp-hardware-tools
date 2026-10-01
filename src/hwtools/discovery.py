@@ -8,8 +8,9 @@ list of :class:`FoundInstrument`, in two stages:
 1. **VXI-11 broadcast** — the LXI-standard discovery path. pyvisa-py sends a
    portmapper broadcast on every interface (per-interface broadcast addresses need
    ``psutil``) and returns ``TCPIP::<host>::INSTR`` for each responder. Sub-second.
-2. **Port sweep** (fallback) — some switches, VLANs and Windows firewalls drop the
-   broadcast. When it finds nothing, every host of each local /24 is tried on the
+2. **Port sweep** (opt-in fallback) — some switches, VLANs and Windows firewalls drop
+   the broadcast. With ``sweep_fallback=True``, when it finds nothing, every host of
+   each local /24 is tried on the
    raw-SCPI ports (Rigol 5555, the common 5025) with a short connect timeout.
 
 Every hit is then asked ``*IDN?`` (raw socket first, VXI-11 second) and parsed.
@@ -222,18 +223,28 @@ def _broadcast_hosts(wait_s: float) -> list[str]:
 def discover_instruments(
     timeout_s: float = 1.5,
     *,
-    sweep_fallback: bool = True,
+    sweep_fallback: bool = False,
     networks: Sequence[ipaddress.IPv4Network] | None = None,
     ports: Sequence[int] = RAW_SCPI_PORTS,
+    skip_hosts: Iterable[str] = (),
 ) -> list[FoundInstrument]:
     """Every SCPI instrument reachable on the local networks, deduplicated by serial.
 
-    ``networks`` overrides the swept networks (default: :func:`local_networks`);
-    ``sweep_fallback=False`` restricts discovery to the VXI-11 broadcast.
+    Discovery is the VXI-11 broadcast. ``sweep_fallback=True`` adds the port sweep
+    when the broadcast finds nothing — off by default, because on a shared network
+    a sweep of every local host looks like a port scan. ``networks`` overrides the
+    swept networks (default: :func:`local_networks`). ``skip_hosts`` are never
+    contacted, e.g. instruments a session already holds: a second client on a raw
+    SCPI socket interleaves with the owner's exchange.
     """
-    hosts = _broadcast_hosts(timeout_s)
+    skip = set(skip_hosts)
+    hosts = [h for h in _broadcast_hosts(timeout_s) if h not in skip]
     if not hosts and sweep_fallback:
-        candidates = _sweep_hosts(networks if networks is not None else local_networks())
+        candidates = [
+            h
+            for h in _sweep_hosts(networks if networks is not None else local_networks())
+            if h not in skip
+        ]
         with cf.ThreadPoolExecutor(_SWEEP_WORKERS) as ex:
             futs = {ex.submit(_port_open, h, p): h for h in candidates for p in ports}
             hosts = list(dict.fromkeys(futs[f] for f in cf.as_completed(futs) if f.result()))
