@@ -395,19 +395,30 @@ class DG1062(ScpiTransportMixin, SignalGenerator):
         self._t.write(":SOUR1:PHASe:SYNChronize")
 
     def set_frequency(self, channel: SigGenChannel, frequency_hz: float) -> None:
-        """Retune a channel already playing a built-in waveform, output left on.
+        """Retune a channel playing a built-in waveform, leaving its output as it was.
 
-        :meth:`configure_channel` restarts the output stage around every write (see
-        :data:`_OUTPUT_SETTLE_S`) — needed to leave arbitrary mode, but ~0.5 s per
-        call. Stepping a sine through a frequency list needs none of that: a bare
-        ``:FREQuency`` write on a basic waveform takes effect directly. Call
-        :meth:`set_phase_deg` afterwards if two channels must stay phase-aligned.
+        A bare ``:FREQuency`` write to a live output is not enough: the DG1062Z
+        accepts it and reads the new value back, but keeps playing the old frequency
+        (bench, 2026-10-07: CH1 counted 100 Hz for 6 s after a write of 10 kHz, with
+        or without :meth:`set_phase_deg`). The read-back cannot catch it. Restarting
+        the output stage around the write — as :meth:`configure_channel` does, see
+        :data:`_OUTPUT_SETTLE_S` — makes it take, so a live output is dropped,
+        retuned and brought back on. Cheaper than a full configure (one parameter),
+        but not instant. Call :meth:`set_phase_deg` afterwards if two channels must
+        stay phase-aligned.
         """
         lo, hi = _CAPABILITIES.min_frequency_hz, _CAPABILITIES.max_frequency_hz
         if not lo <= frequency_hz <= hi:
             raise ValueError(f"frequency {frequency_hz} Hz outside {lo}..{hi} Hz")
-        self._t.write(f":SOUR{int(channel)}:FREQuency {_num(frequency_hz)}")
+        n = int(channel)
+        was_on = self._t.query(f":OUTP{n}:STATe?").strip().upper() in ("ON", "1")
+        if was_on:
+            self._t.write(f":OUTP{n}:STATe OFF")
+            self._settle()
+        self._t.write(f":SOUR{n}:FREQuency {_num(frequency_hz)}")
         self._check_error()
+        if was_on:
+            self.enable_output(channel, True)
 
     # -- arbitrary waveforms --------------------------------------------------
 

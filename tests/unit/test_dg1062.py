@@ -327,12 +327,26 @@ def test_set_phase_offsets_ch2_and_aligns() -> None:
         gen.set_phase_deg(361.0)
 
 
-def test_set_frequency_writes_bare_frequency_without_output_restart() -> None:
-    gen, fake = _gen()
+def test_set_frequency_restarts_a_live_output_around_the_write() -> None:
+    # A bare :FREQuency write to a live output reads back but keeps playing the old
+    # frequency on the real DG1062Z; the output restart is what makes it take.
+    gen, fake = _gen(queries={":OUTP2:STATe?": "ON"})
     gen.set_frequency(SigGenChannel.CH2, 1_234_567.0)
-    assert fake.log == [":SOUR2:FREQuency 1234567.0", ":SYSTem:ERRor?"]
+    assert fake.log == [
+        ":OUTP2:STATe?",
+        ":OUTP2:STATe OFF",
+        ":SOUR2:FREQuency 1234567.0",
+        ":SYSTem:ERRor?",
+        ":OUTP2:STATe ON",
+    ]
     with pytest.raises(ValueError, match="outside"):
         gen.set_frequency(SigGenChannel.CH1, 1e9)
+
+
+def test_set_frequency_leaves_an_off_output_off() -> None:
+    gen, fake = _gen(queries={":OUTP1:STATe?": "OFF"})
+    gen.set_frequency(SigGenChannel.CH1, 1_000.0)
+    assert fake.log == [":OUTP1:STATe?", ":SOUR1:FREQuency 1000.0", ":SYSTem:ERRor?"]
 
 
 # -- readback ----------------------------------------------------------------------
